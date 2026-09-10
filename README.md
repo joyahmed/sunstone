@@ -59,16 +59,16 @@ WSL; `setup.ps1` covers native Windows and is described under
 | **macOS** | `setup.sh` | No `python3` (it arrives with the Xcode command line tools), so the settings template is merged by `node` instead; no `timeout`, so the SessionStart hook bounds git itself rather than running unbounded. `/bin/bash` is 3.2 — nothing here uses a bash 4 feature. BSD `date`, `readlink` and `sort` differ from GNU and each use falls back. |
 | **Windows** | `setup.ps1` | No `python3`, so the two session hooks install as their Node ports (`node` is required for them, and — with no `python3` here — for the `settings.json` template merge too; the git hooks, global `CLAUDE.md` and subagent files land without it). The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell — nothing extra to install. |
 
-⚠️ **Honest status.** Linux and WSL are verified by running the installer end to end. macOS is
-reviewed and its divergences are handled, but **it has not been run on a Mac yet**. `setup.ps1`
-parses cleanly and every parameter binds **under PowerShell 7** — ⚠️ **it does not parse under
-Windows PowerShell 5.1**, so `pwsh` is required, not the `powershell` that ships with Windows —
-and it has been **executed exactly once**, on 2026-09-11, where it **aborted partway** on a bug
-now fixed (`Get-TreeSignature` let `Get-FileHash` throw on an unreadable file). A completed run is
-still outstanding, so treat Windows as expected-to-work rather than proven. ⚠️ It overwrites
-`CLAUDE.md`, replaces skill directories whole, and rewrites `~/.claude/ai-memory-path`, with no
-`-WhatIf` and no dry run — back those up yourself before a first run, and see
-[Windows](claude-setup/SETUP.md#windows). Treat those two as expected-to-work rather than proven, and if
+⚠️ **Honest status.** Linux, WSL and native Windows are each verified by running the installer end
+to end. **macOS is the one platform still unproven** — reviewed, its GNU/BSD divergences handled,
+but never run on a Mac.
+
+On Windows, `setup.ps1` needs **PowerShell 7**: ⚠️ **it does not parse under Windows PowerShell
+5.1**, so use `pwsh`, not the `powershell` that ships with the OS. Its first end-to-end run was
+2026-09-11 — 44 skills across three roots, both git-hook trees, the settings merge and the memory
+wiring. ⚠️ It overwrites `CLAUDE.md`, replaces skill directories whole, and rewrites
+`~/.claude/ai-memory-path`, with no `-WhatIf` and no dry run — back those up yourself before a
+first run, and see [Windows](claude-setup/SETUP.md#windows). Treat those two as expected-to-work rather than proven, and if
 you are the first to try one, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
 
 ## Quick start

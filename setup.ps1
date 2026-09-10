@@ -783,7 +783,15 @@ Write-Host ""
 # that it installed something.
 Write-Host "Installed:"
 if ($gitHooksOk) {
-    Write-Host "  git hooks:     $HomeDir\.git-hooks\{$($gitHookNames -join ',')} (core.hooksPath) + $HomeDir\.git-templates\hooks"
+    # ⚠️ $gitHookNames was never assigned anywhere in this script, so this line
+    # printed a literal "{}" — reported by the first successful Windows run,
+    # 2026-09-11. Read the LIVE directory instead, exactly as setup.sh:718 does:
+    # what matters to the reader is which hooks are in force now, including any
+    # the personal root added, not which ones this run happened to write.
+    $ghLive = (Get-ChildItem -LiteralPath "$HomeDir\.git-hooks" -File -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Name | Where-Object { $_ -notmatch '\.bak\.' } | Sort-Object) -join ','
+    if (-not $ghLive) { $ghLive = "none" }
+    Write-Host "  git hooks:     $HomeDir\.git-hooks\{$ghLive} (core.hooksPath) + $HomeDir\.git-templates\hooks"
 } else {
     Write-Host "  git hooks:     NOT installed (claude-setup\config\git-hooks missing from this checkout)" -ForegroundColor Yellow
 }

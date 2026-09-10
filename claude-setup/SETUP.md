@@ -61,10 +61,10 @@ What each platform is missing by default is covered row by row in [Prerequisites
 below; the short version is that macOS ships neither `python3` nor `timeout` and both have a
 fallback, and Windows ships no `python3` so the session hooks install as Node ports.
 
-⚠️ **Verified where, honestly:** Linux and WSL are exercised end to end. macOS is reviewed and its
-GNU/BSD divergences are handled, but has not been run on a Mac. `setup.ps1` parses cleanly with
-every parameter binding **under PowerShell 7**, but has not been run end to end on Windows.
-[Verify](#verify) is what to check if you are first.
+⚠️ **Verified where, honestly:** Linux, WSL and native Windows are each exercised end to end —
+Windows first on 2026-09-11, under **PowerShell 7** (`setup.ps1` does not parse under Windows
+PowerShell 5.1). **macOS is the one platform still unproven:** reviewed, its GNU/BSD divergences
+handled, but never run on a Mac. [Verify](#verify) is what to check if you are first.
 
 ⛔ **`setup.ps1` does not parse under Windows PowerShell 5.1** — the `powershell` that ships with
 Windows. It needs `pwsh` (PowerShell 7), which is a separate install. This is recorded first-hand
@@ -662,9 +662,11 @@ that ships with the OS, and `setup.ps1` does not parse under 5.1. If you do not 
 `winget install Microsoft.PowerShell`. Check with `pwsh -NoProfile -Command
 '$PSVersionTable.PSVersion.ToString()'` — 7.x is what you want.
 
-⚠️ **`setup.ps1` has been executed exactly once — 2026-09-11 — and it aborted partway.** The cause
-was a bug in this repo, now fixed: `Get-TreeSignature` let `Get-FileHash` throw, and under
-`$ErrorActionPreference = "Stop"` a single unreadable file killed the whole install. It died on
+✅ **`setup.ps1` completed end to end on native Windows on 2026-09-11** — 44 skills across the
+three roots, both git-hook trees, the settings merge and the memory wiring. That was its second
+run. The **first** aborted partway, on a bug in this repo now fixed: `Get-TreeSignature` let
+`Get-FileHash` throw, and under `$ErrorActionPreference = "Stop"` a single unreadable file killed
+the whole install. It died on
 `~\.codex\skills\agile-product-owner\agile-product-owner\SKILL.md` with *"The file cannot be
 accessed by the system."*
 
@@ -677,9 +679,10 @@ failure. So any machine set up that way already has this residue, and the failin
 this. An unreadable file now folds into the signature as a sentinel, which reads as "differs" and
 routes to backup-then-replace.
 
-A **completed** run is still outstanding. Until one is reported, treat Windows as
-expected-to-work, not proven. Before a first run, back these up yourself rather than trusting the
-script — its own backup helper uses `-ErrorAction SilentlyContinue` and can fail quietly:
+On the completing run, all eleven unreadable files were reported, backed up and replaced exactly
+as intended — the residue is survivable, not blocking. Before a first run, still back these up
+yourself rather than trusting the script — its own backup helper uses `-ErrorAction
+SilentlyContinue` and can fail quietly:
 
 - There is **no `-WhatIf`, no `-DryRun`, no `SupportsShouldProcess`**, and `$ErrorActionPreference
   = "Stop"`. It begins writing early and there is no safe partial invocation.
