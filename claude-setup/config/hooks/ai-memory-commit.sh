@@ -49,8 +49,8 @@ for cand in "$REPO" "$HOME/.ai-memory"; do
 done
 [ -z "$REPO" ] && exit 0
 
-# --- read super-ai.conf (optional, grepped never sourced) ------------------
-CONF="$REPO/claude-setup/config/super-ai.conf"
+# --- read sunstone.conf (optional, grepped never sourced) ------------------
+CONF="$REPO/claude-setup/config/sunstone.conf"
 conf_get() {
   # conf_get KEY DEFAULT — last matching line wins; an empty value falls back
   # to DEFAULT. Rules, identical to readConf() in the .js twin:
@@ -151,7 +151,7 @@ fi
 # ⛔ Only the current branch, never --force, never a new remote. If the push is
 # rejected — diverged, no upstream, no remote at all — that is the normal case
 # and the next SessionStart handles it properly, with a pull first.
-PUSH_TIMEOUT="${SUPER_AI_PUSH_TIMEOUT:-20}"
+PUSH_TIMEOUT="${SUNSTONE_PUSH_TIMEOUT:-20}"
 
 git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || exit 0
 

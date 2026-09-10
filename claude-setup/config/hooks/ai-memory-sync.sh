@@ -28,10 +28,10 @@ for cand in "$REPO" "$HOME/.ai-memory"; do
 done
 [ -z "$REPO" ] && exit 0   # nothing to do
 
-# --- read super-ai.conf (optional) -----------------------------------------
+# --- read sunstone.conf (optional) -----------------------------------------
 # POSIX KEY=VALUE lines, '#' comments, values may be double-quoted. The file
 # is user content, so it is grepped rather than sourced. Absent file → defaults.
-CONF="$REPO/claude-setup/config/super-ai.conf"
+CONF="$REPO/claude-setup/config/sunstone.conf"
 conf_get() {
   # conf_get KEY DEFAULT — last matching line wins; an empty value falls back
   # to DEFAULT. Rules, identical to readConf() in the .js twin:

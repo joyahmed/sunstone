@@ -1,9 +1,9 @@
-﻿# super-ai setup (Windows)
+﻿# sunstone setup (Windows)
 # Run: powershell -ExecutionPolicy Bypass -File setup.ps1 [-MemoryRepo <git-url-or-path>] [-CloneTo <dir>] [-SkipMemory] [-SkipOverlay]
 # Or right-click → Run with PowerShell (you will be prompted for the memory repo)
 #
 #   -MemoryRepo <v>      your personal memory repo (any git repo you own): a git URL or a local path.
-#                        (-MemoryRepo:<v> is the same.) Also read from the SUPER_AI_MEMORY_REPO
+#                        (-MemoryRepo:<v> is the same.) Also read from the SUNSTONE_MEMORY_REPO
 #                        environment variable, or asked interactively when a console is present.
 #   -CloneTo <v>         where to clone it when -MemoryRepo is a URL (default: ~\.ai-memory, the
 #                        path the hooks also try when ~\.claude\ai-memory-path is missing).
@@ -13,7 +13,7 @@
 #                        hooks, configs or settings.json the personal repo carries in the same layout
 
 param(
-    [string]$MemoryRepo = $env:SUPER_AI_MEMORY_REPO,
+    [string]$MemoryRepo = $env:SUNSTONE_MEMORY_REPO,
     [string]$CloneTo = "",
     [switch]$SkipMemory,
     [switch]$SkipOverlay
@@ -48,7 +48,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " super-ai setup (Windows)" -ForegroundColor Cyan
+Write-Host " sunstone setup (Windows)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -155,7 +155,7 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false))
 }
 
-# Read one KEY from <personal-repo>/claude-setup/config/super-ai.conf.
+# Read one KEY from <personal-repo>/claude-setup/config/sunstone.conf.
 # A tiny KEY=VALUE parser — the file is user content and is never executed.
 # Same rules as the hooks: last matching line wins, whitespace around the key
 # and the '=' allowed, a '#' starts a comment only at line start or after
@@ -165,7 +165,7 @@ function Write-Utf8NoBom {
 # absent.
 function Get-ConfValue {
     param([string]$Repo, [string]$Key, [string]$Default)
-    $file = Join-Path $Repo "claude-setup\config\super-ai.conf"
+    $file = Join-Path $Repo "claude-setup\config\sunstone.conf"
     if (-not (Test-Path -LiteralPath $file)) { return $Default }
     $val = $null
     foreach ($line in (Get-Content -LiteralPath $file -ErrorAction SilentlyContinue)) {
@@ -310,12 +310,12 @@ New-Item -ItemType Directory -Force -Path $ClaudeHooks | Out-Null
 # own location says nothing). Written unconditionally, as setup.sh does: where
 # this checkout lives is true whether or not node is here to run the hooks,
 # and the summary at the end reports it as recorded.
-Write-Utf8NoBom "$ClaudeDir\super-ai-path" (ConvertTo-Fwd $ScriptDir)
+Write-Utf8NoBom "$ClaudeDir\sunstone-path" (ConvertTo-Fwd $ScriptDir)
 
 # Windows has no python3/jq, so the Linux ai-memory-sync.sh / ai-memory-commit.sh
 # cannot run here. These node ports produce identical behavior; node is
 # required. The doctor notice runs memory-doctor.js from THIS checkout, found
-# through ~\.claude\super-ai-path; it is installed as its node port when one
+# through ~\.claude\sunstone-path; it is installed as its node port when one
 # is shipped, else as the POSIX script run by Git for Windows' bash.
 $hkSrc  = "$ScriptDir\claude-setup\config\hooks\ai-memory-sync.js"
 $ciSrc  = "$ScriptDir\claude-setup\config\hooks\ai-memory-commit.js"
@@ -764,7 +764,7 @@ if (Test-Path -LiteralPath $hkDst) {
 } else {
     Write-Host "  session hooks: NOT installed — node is required for them on Windows" -ForegroundColor Yellow
 }
-Write-Host "  framework:     $ScriptDir  (recorded in $ClaudeDir\super-ai-path for the doctor notice)"
+Write-Host "  framework:     $ScriptDir  (recorded in $ClaudeDir\sunstone-path for the doctor notice)"
 Write-Host ""
 
 Write-Host "Install roots:"
@@ -796,19 +796,19 @@ if ($MemoryRepoPath) {
         Write-Host "  injected file: none yet — create $memFile in the repo and the hook picks it up next session"
     }
     Write-Host "  memory tree:   $memDir  (the SessionEnd hook commits only this path)"
-    Write-Host "  optional config: $MemoryRepoPath\claude-setup\config\super-ai.conf"
+    Write-Host "  optional config: $MemoryRepoPath\claude-setup\config\sunstone.conf"
 } else {
     Write-Host "  no personal repo recorded; hooks are installed and stay silent until"
     Write-Host "  $pathFile points at a git repo (or ~\.ai-memory is one)."
     Write-Host "  re-run:  .\setup.ps1 -MemoryRepo <git-url-or-path>"
-    Write-Host "  optional config: <personal-repo>\claude-setup\config\super-ai.conf"
+    Write-Host "  optional config: <personal-repo>\claude-setup\config\sunstone.conf"
 }
 Write-Host "  config keys (KEY=VALUE, all optional; defaults shown):"
 Write-Host "    MEMORY_DIR=claude-setup/memory              tree the SessionEnd hook may commit"
 Write-Host "    MEMORY_FILE=claude-setup/memory/ABOUT-ME.md file injected into every session"
 Write-Host "    MEMORY_INDEX=claude-setup/memory/MEMORY.md  index memory-doctor checks"
 Write-Host '    MEMORY_REPOS="<repo-name>"                  repos with the mixed-staging guard'
-Write-Host '    GUARDED_REPOS="super-ai <repo-name>"        repos with the force-push guard'
+Write-Host '    GUARDED_REPOS="sunstone <repo-name>"        repos with the force-push guard'
 Write-Host '    MEMORY_META_FILES=""                        files in MEMORY_DIR that are structure, not memories'
 Write-Host '    PROJECT_ROOTS=""                            dirs projects live under (memory-doctor slug resolution)'
 Write-Host ""

@@ -1,4 +1,4 @@
-# super-ai
+# sunstone
 
 A portable memory layer for Claude Code, plus two git hooks that keep it safe when several
 sessions write to the same repo at once. Every session starts by pulling your private memory repo
@@ -11,14 +11,14 @@ in a repo you own.
 
 | Repo | What it holds | Who owns it |
 |---|---|---|
-| **super-ai** (this one) | Hooks, setup scripts, `memory-doctor`, docs. Nothing personal. | Public, shared |
-| **your memory repo** | Your memory files, an optional `super-ai.conf`, and optionally your own skills, commands, agents, hooks and statusline in the framework's layout — the [overlay](claude-setup/SETUP.md#the-overlay-your-own-skills-commands-and-hooks). | You, private |
+| **sunstone** (this one) | Hooks, setup scripts, `memory-doctor`, docs. Nothing personal. | Public, shared |
+| **your memory repo** | Your memory files, an optional `sunstone.conf`, and optionally your own skills, commands, agents, hooks and statusline in the framework's layout — the [overlay](claude-setup/SETUP.md#the-overlay-your-own-skills-commands-and-hooks). | You, private |
 
 The framework never assumes a name, a path or a layout for your memory repo beyond
 [the minimum](claude-setup/SETUP.md#the-memory-repo). Its clone path is recorded in the
 single-line file `~/.claude/ai-memory-path`; every hook reads that file and exits silently when
 it is missing, so a machine without a memory repo runs the hooks as no-ops. A second single-line
-file, `~/.claude/super-ai-path`, records where this framework checkout lives, so hooks that are
+file, `~/.claude/sunstone-path`, records where this framework checkout lives, so hooks that are
 copies can still find `memory-doctor` in it. Both files are read whole and trimmed, never split
 on spaces, so a path containing a space works.
 
@@ -52,8 +52,8 @@ you are the first to try one, the [Verify](claude-setup/SETUP.md#verify) steps a
 ## Quick start
 
 ```bash
-git clone https://github.com/<owner>/super-ai super-ai   # the URL shown on this repository's page
-cd super-ai
+git clone https://github.com/<owner>/sunstone sunstone   # the URL shown on this repository's page
+cd sunstone
 ./setup.sh --memory-repo git@github.com:alice/my-memory.git   # or https://github.com/alice/my-memory.git
 ```
 
@@ -75,7 +75,7 @@ disk. Past that, `setup.sh` resolves the memory repo *first*: the clone, or the 
 path is a git repo, happens before anything is written to the machine, so a bad URL or a missing
 SSH key leaves the machine exactly as it was and there is nothing to undo.
 
-`setup.sh` also reads the repo from `SUPER_AI_MEMORY_REPO` (the flag wins), and asks for it when
+`setup.sh` also reads the repo from `SUNSTONE_MEMORY_REPO` (the flag wins), and asks for it when
 it is running in a terminal with neither. A git URL is cloned into `~/.ai-memory` — the one path
 the hooks also try when `ai-memory-path` is missing — or into `--clone-to <dir>`; anything else is
 treated as a local clone and used in place. Every flag that takes a value accepts both
@@ -84,7 +84,7 @@ treated as a local clone and used in place. Every flag that takes a value accept
 [Flags](claude-setup/SETUP.md#flags).
 
 Clone this repository as it is; fork it first only if you intend to change the framework, since
-`setup.sh` records the checkout's location in `~/.claude/super-ai-path` and the SessionStart
+`setup.sh` records the checkout's location in `~/.claude/sunstone-path` and the SessionStart
 notice hook runs `memory-doctor` from there.
 
 Windows: `powershell -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo <url-or-path>`, and see
@@ -122,7 +122,7 @@ nothing that runs**, because every hook executes from a copy under `~/.claude/ho
 On a machine already set up, a bare `./setup.sh` is enough — the memory repo is remembered.
 
 ```bash
-cd super-ai && git pull && ./setup.sh
+cd sunstone && git pull && ./setup.sh
 ```
 
 ## What the hooks do
@@ -171,7 +171,7 @@ machine-local **working tier**, per-project **repo stores** and **duplicates** a
 ## Layout
 
 ```
-super-ai/
+sunstone/
 ├── README.md
 ├── setup.sh                       # Linux / macOS / WSL — the installer these docs describe
 ├── setup.ps1                      # Windows equivalent (Node hook ports; keeps its UTF-8 BOM)
@@ -208,6 +208,6 @@ also setting `core.hooksPath` would put them on disk where nothing runs them —
 no memory hooks, so on its own it leaves them installed and inert. `setup.sh` is what installs the
 memory layer; see [The second installer](claude-setup/SETUP.md#the-second-installer-installsh).
 
-Flags, prerequisites, the memory repo's layout and file format, the `super-ai.conf` reference,
+Flags, prerequisites, the memory repo's layout and file format, the `sunstone.conf` reference,
 what lands where file by file, how to verify a fresh install, Windows, troubleshooting and
 uninstall are all in [claude-setup/SETUP.md](claude-setup/SETUP.md).

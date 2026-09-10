@@ -26,7 +26,7 @@ NC='\033[0m'
 #                       personal repo carries in the same layout
 #   -h, --help
 #
-# The repo can also come from the SUPER_AI_MEMORY_REPO environment variable, or
+# The repo can also come from the SUNSTONE_MEMORY_REPO environment variable, or
 # from an interactive prompt when stdin is a terminal.
 
 usage() {
@@ -36,11 +36,11 @@ Examples:
   bash setup.sh --memory-repo git@github.com:alice/my-memory.git
   bash setup.sh --memory-repo=~/src/my-memory
   bash setup.sh --memory-repo https://github.com/alice/my-memory --clone-to=~/src/my-memory
-  SUPER_AI_MEMORY_REPO=https://github.com/alice/my-memory bash setup.sh
+  SUNSTONE_MEMORY_REPO=https://github.com/alice/my-memory bash setup.sh
 USAGE
 }
 
-MEMORY_REPO_SPEC="${SUPER_AI_MEMORY_REPO:-}"
+MEMORY_REPO_SPEC="${SUNSTONE_MEMORY_REPO:-}"
 CLONE_TO=""
 SKIP_MEMORY=0
 SKIP_OVERLAY=0
@@ -71,7 +71,7 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 echo -e "${CYAN}========================================"
-echo " super-ai setup (Linux / macOS / WSL)"
+echo " sunstone setup (Linux / macOS / WSL)"
 echo -e "========================================${NC}"
 echo ""
 
@@ -124,7 +124,7 @@ is_git_url() {
   printf '%s' "$1" | grep -qE '^[^/\\]+@[^/\\]+:'
 }
 
-# Read one KEY from <personal-repo>/claude-setup/config/super-ai.conf.
+# Read one KEY from <personal-repo>/claude-setup/config/sunstone.conf.
 # Source-free on purpose: the file is user content, so it is grepped, never
 # executed. Prints the default when the file or the key is absent. Same rules
 # as the hooks: last matching line wins, leading whitespace allowed, a '#'
@@ -133,7 +133,7 @@ is_git_url() {
 # stripped, whitespace is trimmed (never deleted from inside a value).
 conf_get() {
   local repo="$1" key="$2" default="$3" file val
-  file="$repo/claude-setup/config/super-ai.conf"
+  file="$repo/claude-setup/config/sunstone.conf"
   val=""
   if [ -f "$file" ]; then
     # Byte-for-byte the body of conf_get in claude-setup/config/hooks/
@@ -233,7 +233,7 @@ fi
 #    An existing clone at the destination is reused.
 #
 #    --skip-memory short-circuits the whole block, MEMORY_REPO_SPEC or not: the
-#    flag promises the path file is left alone, and SUPER_AI_MEMORY_REPO being
+#    flag promises the path file is left alone, and SUNSTONE_MEMORY_REPO being
 #    exported in the environment must not quietly break that promise (it used
 #    to — the spec was resolved, cloned and written one line after the script
 #    said it would not touch anything). setup.ps1 keeps the same shape.
@@ -346,10 +346,10 @@ install_file "$SCRIPT_DIR/claude-setup/config/hooks/ai-memory-sync.sh" "$HOME_DI
 install_file "$SCRIPT_DIR/claude-setup/config/hooks/ai-memory-commit.sh" "$HOME_DIR/.claude/hooks/ai-memory-commit.sh"
 # The doctor notice: one throttled line from `memory-doctor --brief` at
 # SessionStart, nothing when the stores are clean. It runs memory-doctor.js
-# from THIS checkout, located through ~/.claude/super-ai-path (the hook itself
+# from THIS checkout, located through ~/.claude/sunstone-path (the hook itself
 # is a copy, so its own location says nothing).
 install_file "$SCRIPT_DIR/claude-setup/config/hooks/memory-doctor-notice.sh" "$HOME_DIR/.claude/hooks/memory-doctor-notice.sh"
-printf '%s\n' "$SCRIPT_DIR" > "$HOME_DIR/.claude/super-ai-path"
+printf '%s\n' "$SCRIPT_DIR" > "$HOME_DIR/.claude/sunstone-path"
 # Register the SessionStart + SessionEnd hooks in ~/.claude/settings.json
 # (idempotent, non-destructive: existing entries are kept). The file is backed
 # up first; the backup is dropped again if the merge turned out to be a no-op.
@@ -718,7 +718,7 @@ echo "Installed:"
 gh_live="$(ls "$HOME_DIR/.git-hooks" 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 echo "  git hooks:     $HOME_DIR/.git-hooks/{${gh_live:-none}} (core.hooksPath) + $HOME_DIR/.git-templates/hooks"
 echo "  session hooks: $HOME_DIR/.claude/hooks/{ai-memory-sync,ai-memory-commit,memory-doctor-notice}.sh"
-echo "  framework:     $SCRIPT_DIR  (recorded in $HOME_DIR/.claude/super-ai-path for the doctor notice)"
+echo "  framework:     $SCRIPT_DIR  (recorded in $HOME_DIR/.claude/sunstone-path for the doctor notice)"
 echo ""
 
 echo "Install roots:"
@@ -748,12 +748,12 @@ if [ -n "$MEMORY_REPO" ]; then
     echo "  injected file: none yet — create $mem_file in the repo and the hook picks it up next session"
   fi
   echo "  memory tree:   $mem_dir  (the SessionEnd hook commits only this path)"
-  echo "  optional config: $MEMORY_REPO/claude-setup/config/super-ai.conf"
+  echo "  optional config: $MEMORY_REPO/claude-setup/config/sunstone.conf"
 else
   echo "  no personal repo recorded; hooks are installed and stay silent until"
   echo "  $PATH_FILE points at a git repo (or ~/.ai-memory is one)."
   echo "  re-run:  bash setup.sh --memory-repo <git-url-or-path>"
-  echo "  optional config: <personal-repo>/claude-setup/config/super-ai.conf"
+  echo "  optional config: <personal-repo>/claude-setup/config/sunstone.conf"
 fi
 cat <<'CONF'
   config keys (KEY=VALUE, all optional; defaults shown):
@@ -761,7 +761,7 @@ cat <<'CONF'
     MEMORY_FILE=claude-setup/memory/ABOUT-ME.md file injected into every session
     MEMORY_INDEX=claude-setup/memory/MEMORY.md  index memory-doctor checks
     MEMORY_REPOS="<repo-name>"                  repos with the mixed-staging guard
-    GUARDED_REPOS="super-ai <repo-name>"        repos with the force-push guard
+    GUARDED_REPOS="sunstone <repo-name>"        repos with the force-push guard
     MEMORY_META_FILES=""                        files in MEMORY_DIR that are structure, not memories
     PROJECT_ROOTS=""                            dirs projects live under (memory-doctor slug resolution)
 CONF

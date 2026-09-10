@@ -1,6 +1,6 @@
 # Memory tiers — decide WHERE before writing a memory file
 
-Durable memory lives in git, not in the tool. The SessionStart hook (`ai-memory-sync`) pulls the user's personal repo (its clone path is the one line in `~/.claude/ai-memory-path`, `~/.ai-memory` by default) and injects one file — `MEMORY_FILE`, default `claude-setup/memory/ABOUT-ME.md` — into every session. The SessionEnd hook (`ai-memory-commit`) commits anything written under the memory tree (`MEMORY_DIR`, default `claude-setup/memory`) and the next session start pushes it. `memory-doctor` checks that the index (`MEMORY_INDEX`, default `claude-setup/memory/MEMORY.md`) lists every memory file exactly once. All of these paths can be changed in `<personal-repo>/claude-setup/config/super-ai.conf`.
+Durable memory lives in git, not in the tool. The SessionStart hook (`ai-memory-sync`) pulls the user's personal repo (its clone path is the one line in `~/.claude/ai-memory-path`, `~/.ai-memory` by default) and injects one file — `MEMORY_FILE`, default `claude-setup/memory/ABOUT-ME.md` — into every session. The SessionEnd hook (`ai-memory-commit`) commits anything written under the memory tree (`MEMORY_DIR`, default `claude-setup/memory`) and the next session start pushes it. `memory-doctor` checks that the index (`MEMORY_INDEX`, default `claude-setup/memory/MEMORY.md`) lists every memory file exactly once. All of these paths can be changed in `<personal-repo>/claude-setup/config/sunstone.conf`.
 
 There are three homes and they are not interchangeable:
 

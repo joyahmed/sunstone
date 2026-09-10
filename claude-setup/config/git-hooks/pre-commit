@@ -21,7 +21,7 @@
 # intent.
 #
 # WHICH REPOS: the space-separated MEMORY_REPOS list in
-#   <personal-repo>/claude-setup/config/super-ai.conf
+#   <personal-repo>/claude-setup/config/sunstone.conf
 # where <personal-repo> is the single line in ~/.claude/ai-memory-path (or
 # $HOME/.ai-memory when that file is missing and the directory is a git repo).
 # Default when the key is absent: the basename of the personal repo's origin
@@ -40,7 +40,7 @@
 # and exits 0.
 #
 # ⚠️ INSTALLATION IS A COPY, NOT A PULL. Source of truth is
-# claude-setup/config/git-hooks/pre-commit in super-ai; the live copy is
+# claude-setup/config/git-hooks/pre-commit in sunstone; the live copy is
 # ~/.git-hooks/pre-commit. **Pulling the repo does not update the live copy** —
 # re-run setup.sh, or copy it in by hand. Otherwise a hook can sit in the repo
 # while ~/.git-hooks has no copy of it, and a guard that is missing on one
@@ -107,10 +107,10 @@ fi
 # on a machine that never ran setup: straight to the repo's own hook.
 [ -z "$PERSONAL" ] && chain_local "$@"
 
-CONF="$PERSONAL/claude-setup/config/super-ai.conf"
+CONF="$PERSONAL/claude-setup/config/sunstone.conf"
 
 # conf_get KEY DEFAULT — POSIX KEY=VALUE lines. The parsing rule is the
-# framework's and every reader of super-ai.conf shares it:
+# framework's and every reader of sunstone.conf shares it:
 # '#' starts a comment only at line start or after whitespace (so "a#b" is the
 # value a#b, "#b" is the value #b, while "a #b" is the value a); a value may be
 # double-quoted and the surrounding quotes are stripped (a '#' inside them is
@@ -235,7 +235,7 @@ EOF
 			printf '     git restore --staged <the paths that are not yours>\n' >&2
 			printf '     git commit -- %s\n\n' "$MEMORY_DIR" >&2
 			printf '   Genuinely one change: ALLOW_MIXED_COMMIT=1 git commit ...\n' >&2
-			printf '   Change the list/tree: MEMORY_REPOS / MEMORY_DIR in claude-setup/config/super-ai.conf\n\n' >&2
+			printf '   Change the list/tree: MEMORY_REPOS / MEMORY_DIR in claude-setup/config/sunstone.conf\n\n' >&2
 			exit 1
 		fi
 	fi

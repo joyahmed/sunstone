@@ -18,7 +18,7 @@
  *   working  — ~/.claude/projects/<slug>/memory/, machine-local, syncs nowhere
  *   repo     — <project>/docs/ai-memory/ inside each project Claude has opened
  *
- * Layout is read from <personal-repo>/claude-setup/config/super-ai.conf when it
+ * Layout is read from <personal-repo>/claude-setup/config/sunstone.conf when it
  * exists (KEY=VALUE lines); every key has a default, so the file is optional:
  *   MEMORY_DIR         claude-setup/memory
  *   MEMORY_FILE        claude-setup/memory/ABOUT-ME.md
@@ -79,7 +79,7 @@ const FRAMEWORK_DIR = path.resolve(__dirname, '..', '..');
 const REINSTALL = process.platform === 'win32' ? 'setup.ps1' : 'setup.sh';
 
 /** Where the optional layout file lives, relative to the personal repo. */
-const CONF_SUBPATH = path.join('claude-setup', 'config', 'super-ai.conf');
+const CONF_SUBPATH = path.join('claude-setup', 'config', 'sunstone.conf');
 
 /** Defaults for every layout key — the conf file may be absent entirely. */
 const CONF_DEFAULTS = {
@@ -391,7 +391,7 @@ stats.conf = exists(path.join(REPO, CONF_SUBPATH)) ? path.join(REPO, CONF_SUBPAT
 
 if (!isDir(SYNCED)) {
   error('wiring', `${MEM_SUBPATH}/ does not exist in ${REPO}. Nothing can be synced ` +
-    'from a memory tree that is not there — check MEMORY_DIR in super-ai.conf.');
+    'from a memory tree that is not there — check MEMORY_DIR in sunstone.conf.');
 }
 if (!exists(path.join(REPO, CONF.MEMORY_FILE)) && !exists(path.join(SYNCED, 'MEMORY.md'))) {
   warn('wiring', `Neither ${CONF.MEMORY_FILE} nor ${MEM_SUBPATH}/MEMORY.md exists — the ` +
@@ -1075,7 +1075,7 @@ function report() {
   console.log('');
   console.log(c('1', 'memory doctor') + `  ${stats.repo || '(no repo)'}`);
   if (stats.repo) {
-    console.log(`               ${stats.conf ? 'layout: ' + showPath(stats.conf) : 'layout: defaults (no super-ai.conf)'}`);
+    console.log(`               ${stats.conf ? 'layout: ' + showPath(stats.conf) : 'layout: defaults (no sunstone.conf)'}`);
   }
   if (stats.branch) {
     const drift = stats.upstream

@@ -11,7 +11,7 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-// Optional <repo>/claude-setup/config/super-ai.conf: POSIX KEY=VALUE lines.
+// Optional <repo>/claude-setup/config/sunstone.conf: POSIX KEY=VALUE lines.
 // Rules, identical to conf_get in the .sh twin: '#' starts a comment only at
 // line start or after whitespace (a#b is a value); a double-quoted value runs
 // to the next '"' (a '#' inside is literal, anything after the closing quote
@@ -23,7 +23,7 @@ function readConf(repo) {
   const conf = {};
   let text;
   try {
-    text = fs.readFileSync(path.join(repo, "claude-setup", "config", "super-ai.conf"), "utf8");
+    text = fs.readFileSync(path.join(repo, "claude-setup", "config", "sunstone.conf"), "utf8");
   } catch {
     return conf;
   }

@@ -30,7 +30,7 @@ const os = require("os");
 const path = require("path");
 const { execFileSync, spawn } = require("child_process");
 
-// Optional <repo>/claude-setup/config/super-ai.conf: POSIX KEY=VALUE lines.
+// Optional <repo>/claude-setup/config/sunstone.conf: POSIX KEY=VALUE lines.
 // Rules, identical to conf_get in the .sh twin: '#' starts a comment only at
 // line start or after whitespace (a#b is a value); a double-quoted value runs
 // to the next '"' (a '#' inside is literal, anything after the closing quote
@@ -42,7 +42,7 @@ function readConf(repo) {
   const conf = {};
   let text;
   try {
-    text = fs.readFileSync(path.join(repo, "claude-setup", "config", "super-ai.conf"), "utf8");
+    text = fs.readFileSync(path.join(repo, "claude-setup", "config", "sunstone.conf"), "utf8");
   } catch {
     return conf;
   }
@@ -241,7 +241,7 @@ function main() {
   // waiting on a stdin nobody is watching, and SSH is bounded by its own
   // ConnectTimeout. Anything that still escapes is an orphan that harms
   // nothing and the next SessionStart repairs.
-  const secs = String(Number(process.env.SUPER_AI_PUSH_TIMEOUT) || 20);
+  const secs = String(Number(process.env.SUNSTONE_PUSH_TIMEOUT) || 20);
   try {
     const child = spawn("git", [
       "-C", repo,

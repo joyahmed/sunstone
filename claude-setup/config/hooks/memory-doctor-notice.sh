@@ -33,19 +33,19 @@ if [ -f "$STAMP" ]; then
 fi
 
 # --- locate the framework checkout -----------------------------------------
-# memory-doctor.js lives in the super-ai framework, not in the user's memory
+# memory-doctor.js lives in the sunstone framework, not in the user's memory
 # repo, and this hook is COPIED to ~/.claude/hooks/ by setup, so its own
 # location normally says nothing. The doctor also resolves the framework from
 # its own __dirname (for the wiring check), so it cannot simply be copied next
 # to this hook — the framework checkout has to be found. Resolution order:
-#   1. ~/.claude/super-ai-path — one line, the framework clone. setup.sh
+#   1. ~/.claude/sunstone-path — one line, the framework clone. setup.sh
 #      should write this; it is the only route that survives every layout.
 #   2. this hook's own location, symlinks resolved, for a checkout that runs
 #      the hook in place (<framework>/claude-setup/config/hooks/ → <framework>).
 #   3. the memory repo from ~/.claude/ai-memory-path (or $HOME/.ai-memory):
 #      first the repo itself, for the layout where the memory repo is a
 #      framework checkout. Then, as a pure convenience guess, a sibling
-#      directory named super-ai — for users who keep their clones side by
+#      directory named sunstone — for users who keep their clones side by
 #      side. setup.sh does NOT create that layout (it clones the memory repo
 #      into ~/.ai-memory by default), so nothing relies on this guess.
 # Every candidate is verified by the presence of memory-doctor.js; a wrong
@@ -53,9 +53,9 @@ fi
 DOCTOR_REL="claude-setup/scripts/memory-doctor.js"
 FRAMEWORK=""
 cands=""
-if [ -f "${HOME}/.claude/super-ai-path" ]; then
+if [ -f "${HOME}/.claude/sunstone-path" ]; then
   # Trim, never squeeze: a path may contain spaces.
-  cands="$(head -n1 "${HOME}/.claude/super-ai-path" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  cands="$(head -n1 "${HOME}/.claude/sunstone-path" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 fi
 self="$0"
 if command -v readlink >/dev/null 2>&1; then
@@ -72,7 +72,7 @@ fi
 if [ -n "$MEMORY_REPO" ]; then
   cands="$cands
 $MEMORY_REPO
-$(dirname "$MEMORY_REPO")/super-ai"
+$(dirname "$MEMORY_REPO")/sunstone"
 fi
 
 while IFS= read -r cand; do

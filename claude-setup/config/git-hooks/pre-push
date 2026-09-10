@@ -8,16 +8,16 @@
 # already committed. This hook refuses any push that would
 # rewrite or delete remote history in the guarded repos. Every other repo is
 # untouched. The framework protects itself: a remote whose basename is
-# "super-ai" is guarded even when no ~/.claude/ai-memory-path (and so no
+# "sunstone" is guarded even when no ~/.claude/ai-memory-path (and so no
 # config) exists on the machine.
 #
 # WHICH REPOS: the space-separated GUARDED_REPOS list in
-#   <personal-repo>/claude-setup/config/super-ai.conf
+#   <personal-repo>/claude-setup/config/sunstone.conf
 # where <personal-repo> is the single line in ~/.claude/ai-memory-path (or
 # $HOME/.ai-memory when that file is missing and the directory is a git repo).
-# Default when the key is absent: "super-ai <basename of the personal repo's
+# Default when the key is absent: "sunstone <basename of the personal repo's
 # origin URL>". When no personal repo can be found at all, the list is just
-# "super-ai" — the guard never silently vanishes on a half-set-up machine.
+# "sunstone" — the guard never silently vanishes on a half-set-up machine.
 #
 # ⚠️ Git does NOT tell a pre-push hook whether --force was passed. There is no
 # flag to read. So we detect the EFFECT instead: a push is a rewrite when the
@@ -50,10 +50,10 @@ fi
 [ -z "$PERSONAL" ] && [ -e "$HOME/.ai-memory/.git" ] && PERSONAL="$HOME/.ai-memory"
 
 CONF=""
-[ -n "$PERSONAL" ] && CONF="$PERSONAL/claude-setup/config/super-ai.conf"
+[ -n "$PERSONAL" ] && CONF="$PERSONAL/claude-setup/config/sunstone.conf"
 
 # conf_get KEY DEFAULT — POSIX KEY=VALUE lines. The parsing rule is the
-# framework's and every reader of super-ai.conf shares it:
+# framework's and every reader of sunstone.conf shares it:
 # '#' starts a comment only at line start or after whitespace (so "a#b" is the
 # value a#b, "#b" is the value #b, while "a #b" is the value a); a value may be
 # double-quoted and the surrounding quotes are stripped (a '#' inside them is
@@ -83,21 +83,21 @@ conf_get() {
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
 }
 
-# ⚠️ The built-in default is "super-ai" plus ONE more name — the personal repo's
+# ⚠️ The built-in default is "sunstone" plus ONE more name — the personal repo's
 # — and a repo name may contain a space (a checkout at ".../my notes", or an
 # origin URL with one). Folding that name into the space-separated list would
 # word-split it, which silently leaves the memory repo UNGUARDED while guarding
 # every unrelated repo whose name matches a fragment of it. So the default is
 # built by comparing each part whole, and only a list the user wrote
 # deliberately is word-split — which also keeps an explicit GUARDED_REPOS able
-# to drop "super-ai", exactly as the docs promise.
+# to drop "sunstone", exactly as the docs promise.
 GUARDED_REPOS=$(conf_get GUARDED_REPOS "")
 
 GUARDED=0
 if [ -z "$GUARDED_REPOS" ]; then
 	# The framework guards itself even on a machine with no personal repo and so
 	# no config at all — the guard never silently vanishes on a half-set-up box.
-	[ "$REPO" = "super-ai" ] && GUARDED=1
+	[ "$REPO" = "sunstone" ] && GUARDED=1
 	if [ -n "$PERSONAL" ] && [ -n "$REPO" ] && [ "$(repo_name_of "$PERSONAL")" = "$REPO" ]; then
 		GUARDED=1
 	fi
@@ -155,7 +155,7 @@ if [ "$GUARDED" = "1" ]; then
 			printf '   commits another live session has already made.\n\n' >&2
 			printf '   Integrate instead:  git pull --rebase origin <branch> && git push\n' >&2
 			printf '   Genuinely intended: ALLOW_FORCE_PUSH=1 git push ...\n' >&2
-			printf '   Change the list:    GUARDED_REPOS in claude-setup/config/super-ai.conf\n\n' >&2
+			printf '   Change the list:    GUARDED_REPOS in claude-setup/config/sunstone.conf\n\n' >&2
 			exit 1
 		fi
 	fi

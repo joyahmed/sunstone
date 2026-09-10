@@ -1,6 +1,6 @@
 # Setup runbook
 
-How `setup.sh` / `setup.ps1` wire the super-ai memory layer into Claude Code on one machine,
+How `setup.sh` / `setup.ps1` wire the sunstone memory layer into Claude Code on one machine,
 what lands where, how to verify it, what to do when it goes quiet — and why every piece is
 shaped the way it is. The README is the front door: what this is, what to type, and the smallest
 true mental model. This file is everything behind it, and it is meant to be read by section
@@ -16,7 +16,7 @@ Throughout, the example memory repo is `my-memory`, owned by `alice`.
 # 0. Prerequisites below: git (required), sh, Claude Code; python3 and node
 #    recommended. The framework ships no statusline, so nothing here needs jq.
 # 1. Get the framework (the URL shown on this repository's page; fork only to change it)
-git clone https://github.com/<owner>/super-ai super-ai && cd super-ai
+git clone https://github.com/<owner>/sunstone sunstone && cd sunstone
 # 2. Install, naming your memory repo by a URL this machine can already authenticate to
 ./setup.sh --memory-repo git@github.com:alice/my-memory.git    # or https://github.com/alice/my-memory.git
 # 3. Restart Claude Code, then verify
@@ -27,14 +27,14 @@ node claude-setup/scripts/memory-doctor.js
 
 | `setup.sh` | `setup.ps1` | Meaning |
 |---|---|---|
-| `--memory-repo <url-or-path>`, `--memory-repo=<url-or-path>` | `-MemoryRepo` | The memory repo. A git URL (`scheme://` or `user@host:`) is cloned; anything else is a local path (`~` allowed) to a clone you already have, used in place — it must be a directory and a git repo, or setup stops **before writing anything** and says `nothing has been installed`. Also read from `SUPER_AI_MEMORY_REPO`; the flag wins. |
+| `--memory-repo <url-or-path>`, `--memory-repo=<url-or-path>` | `-MemoryRepo` | The memory repo. A git URL (`scheme://` or `user@host:`) is cloned; anything else is a local path (`~` allowed) to a clone you already have, used in place — it must be a directory and a git repo, or setup stops **before writing anything** and says `nothing has been installed`. Also read from `SUNSTONE_MEMORY_REPO`; the flag wins. |
 | `--clone-to <dir>`, `--clone-to=<dir>` | `-CloneTo` | Where a URL is cloned. Both default to `~/.ai-memory`, the one path every hook also tries when `~/.claude/ai-memory-path` is missing. An existing clone at the destination is reused; a non-git directory there is an error (again before anything is installed). Ignored, with a printed notice rather than silently, when the memory repo you gave is a local path — there is nothing to clone. |
 | `--skip-memory` | `-SkipMemory` | Do not touch `~/.claude/ai-memory-path` at all. The hooks are still installed. |
 | `--skip-overlay` | `-SkipOverlay` | Install from the framework root only; ignore any skills, commands, agents, hooks or `settings.json` template the memory repo carries. See [The overlay](#the-overlay-your-own-skills-commands-and-hooks). |
 | `-h`, `--help` | the comment header at the top of `setup.ps1` | Usage. |
 
-The memory repo is the only setting with an environment form (`SUPER_AI_MEMORY_REPO`); the
-others are `SUPER_AI_PUSH_TIMEOUT` for the SessionEnd push and the two guard overrides,
+The memory repo is the only setting with an environment form (`SUNSTONE_MEMORY_REPO`); the
+others are `SUNSTONE_PUSH_TIMEOUT` for the SessionEnd push and the two guard overrides,
 `ALLOW_MIXED_COMMIT` and `ALLOW_FORCE_PUSH`, none of which setup reads. With no repo given,
 `setup.sh` running in a terminal asks for one — Enter keeps the clone already recorded in
 `~/.claude/ai-memory-path`, or skips when there is none. Without a terminal it keeps the recorded
@@ -67,7 +67,7 @@ Windows PowerShell 5.1 with every parameter binding, but has not been run end to
 
 | Tool | Needed for | Notes |
 |---|---|---|
-| **git** | everything | Any recent version, and a **hard** requirement: `setup.sh` checks for it before it prints its banner and exits 1 with `! git is required and was not found on PATH; nothing has been installed.` when it is absent — every step that follows needs git, and a missing one used to surface as a bare `git: command not found` halfway through, after the hook files had landed. **`setup.ps1` refuses identically** — the same check, before its own banner, throwing `git is required and was not found on PATH; nothing has been installed.` On Windows the silent-failure mode was the worse of the two: its `Invoke-GitQuiet` helper swallows the "command not found" exception and leaves `$LASTEXITCODE` holding some earlier command's status, so a clone that never happened could read as success and the run would carry on against a directory that is not there. Hooks resolve the repo name from `git remote get-url origin`, falling back to the worktree's directory name where there is no `origin` — see [`super-ai.conf` reference](#super-aiconf-reference). The memory repo URL must be one this machine can already authenticate to — an SSH key for `git@github.com:` URLs, a credential helper or token for `https://` ones; `git ls-remote <url>` is the quick check. `setup.sh` clones before it writes anything else, so an auth failure stops it with `nothing has been installed`; re-run with a working URL. |
+| **git** | everything | Any recent version, and a **hard** requirement: `setup.sh` checks for it before it prints its banner and exits 1 with `! git is required and was not found on PATH; nothing has been installed.` when it is absent — every step that follows needs git, and a missing one used to surface as a bare `git: command not found` halfway through, after the hook files had landed. **`setup.ps1` refuses identically** — the same check, before its own banner, throwing `git is required and was not found on PATH; nothing has been installed.` On Windows the silent-failure mode was the worse of the two: its `Invoke-GitQuiet` helper swallows the "command not found" exception and leaves `$LASTEXITCODE` holding some earlier command's status, so a clone that never happened could read as success and the run would carry on against a directory that is not there. Hooks resolve the repo name from `git remote get-url origin`, falling back to the worktree's directory name where there is no `origin` — see [`sunstone.conf` reference](#sunstoneconf-reference). The memory repo URL must be one this machine can already authenticate to — an SSH key for `git@github.com:` URLs, a credential helper or token for `https://` ones; `git ls-remote <url>` is the quick check. `setup.sh` clones before it writes anything else, so an auth failure stops it with `nothing has been installed`; re-run with a working URL. |
 | **POSIX `sh`** | the git hooks and the Claude Code hooks on Linux/macOS/WSL | Present everywhere but Windows, where Git for Windows supplies it. |
 | **Claude Code** | the SessionStart / SessionEnd hooks | https://claude.com/claude-code — install and `claude login` before running setup. |
 | **python3** | the JSON `additionalContext` envelope in the sync and notice hooks; registering the three memory hooks in `settings.json` | Optional on Linux, but registration is the one step of setup with no Node fallback: `merge-ai-memory-hook.py` has no port, so without `python3` setup prints the three commands to add by hand — see [Registering the hooks by hand](#registering-the-hooks-by-hand) — and the hooks themselves fall back to plain stdout, which Claude Code also adds to context. |
@@ -101,12 +101,12 @@ clutter — the same rule the per-file copy helper applies.
 
 | Target | Source in this repo | Purpose |
 |---|---|---|
-| `~/.claude/ai-memory-path` | written from `--memory-repo` / `SUPER_AI_MEMORY_REPO` / the prompt | One line: the absolute path of the memory repo clone. Every hook reads it and exits silently when it is missing. Not written with `--skip-memory` or when no repo was given. |
+| `~/.claude/ai-memory-path` | written from `--memory-repo` / `SUNSTONE_MEMORY_REPO` / the prompt | One line: the absolute path of the memory repo clone. Every hook reads it and exits silently when it is missing. Not written with `--skip-memory` or when no repo was given. |
 | the memory repo clone | `git clone` of the URL you gave, into `~/.ai-memory` or `--clone-to` | Only when a URL was given and no clone exists there yet. A local path is used in place and nothing is cloned. |
 | `~/.claude/hooks/ai-memory-sync.sh` | `claude-setup/config/hooks/ai-memory-sync.sh` | SessionStart: pull, push last session's commits, inject `MEMORY_FILE`. |
 | `~/.claude/hooks/ai-memory-commit.sh` | `claude-setup/config/hooks/ai-memory-commit.sh` | SessionEnd: commit `MEMORY_DIR` by path. Never pushes. |
 | `~/.claude/hooks/memory-doctor-notice.sh` | `claude-setup/config/hooks/memory-doctor-notice.sh` | SessionStart: one throttled line from `memory-doctor --brief`, or nothing. |
-| `~/.claude/super-ai-path` | the directory `setup.sh` was run from | One line: the framework checkout. The notice hook runs `memory-doctor.js` from there, because the hook itself is a copy and cannot find the checkout from its own location. Move or delete the checkout and the notice goes quiet (nothing else breaks). |
+| `~/.claude/sunstone-path` | the directory `setup.sh` was run from | One line: the framework checkout. The notice hook runs `memory-doctor.js` from there, because the hook itself is a copy and cannot find the checkout from its own location. Move or delete the checkout and the notice goes quiet (nothing else breaks). |
 | `~/.claude/settings.json` | merged by `claude-setup/config/merge-ai-memory-hook.py`, needs `python3` | Adds `ai-memory-sync.sh` and `memory-doctor-notice.sh` under `SessionStart` and `ai-memory-commit.sh` (async) under `SessionEnd`, each only if not already present. Every other key and hook is kept. Backed up first; the backup is removed again when the merge changed nothing. This is the one step with no Node fallback — without `python3` the three commands are printed instead, and the template merge two rows down still runs. |
 | `~/.git-hooks/pre-commit`, `~/.git-hooks/pre-push` | `claude-setup/config/git-hooks/` | The mixed-staging guard and the force-push guard. |
 | `~/.git-hooks/<name>`, `~/.git-templates/hooks/<name>` | `claude-setup/config/git-hooks/<name>` under **either root** | Overlay step. The framework ships `pre-commit` and `pre-push`; the personal repo may ship more, or replace either by carrying the same filename — its copies install last and win. This is where a hook that is a *policy* rather than a guard belongs: carrying the file is the opt-in, so no flag gates it and nobody else inherits it. |
@@ -200,9 +200,9 @@ filename under the right event, so a `~`-relative path passes too.
 ### The doctor notice hook
 
 `memory-doctor-notice.sh` is the third hook `setup.sh` installs and registers. It needs `node`
-and a framework checkout: it reads `~/.claude/super-ai-path` first, then falls back to its own
+and a framework checkout: it reads `~/.claude/sunstone-path` first, then falls back to its own
 location (for a checkout that runs the hook in place) and to the memory repo (or a directory named
-`super-ai` beside it), and gives up silently when none of those contains
+`sunstone` beside it), and gives up silently when none of those contains
 `claude-setup/scripts/memory-doctor.js`. The doctor's own wiring check covers the two memory
 hooks, not this one, so a broken notice hook is only visible as an absent notice. Disable it with
 `touch ~/.claude/.memory-doctor-off`; its throttle stamp is `~/.claude/.memory-doctor-last`.
@@ -260,7 +260,7 @@ look almost identical, and the way to tell them apart is that the second leaves 
 
 It copies the three memory hook *scripts* — its hooks step ships that whole directory, all six
 files of it, exactly as `setup.sh` does — but it never **registers** them in `settings.json`, and
-it writes neither `~/.claude/ai-memory-path` nor `~/.claude/super-ai-path`.
+it writes neither `~/.claude/ai-memory-path` nor `~/.claude/sunstone-path`.
 Registration comes from `setup.sh` alone. Running `install.sh` on its own therefore leaves the
 memory hooks sitting on disk and inert, which is exactly the "installed and dead" state
 `memory-doctor`'s wiring check exists to flag; run `setup.sh` for the memory layer. Both
@@ -368,7 +368,7 @@ in `--memory-repo`. Minimum layout, using the defaults:
 my-memory/
 └── claude-setup/
     ├── config/
-    │   └── super-ai.conf        # optional
+    │   └── sunstone.conf        # optional
     └── memory/
         ├── ABOUT-ME.md          # MEMORY_FILE — injected into every session
         ├── MEMORY.md            # MEMORY_INDEX — one line per memory file
@@ -417,9 +417,9 @@ can neither pull nor push (they stay silent about it, which is the point of the 
 plain-text index line such as `- coding-style.md — ...` is not a link and the doctor reports the
 file as unindexed.
 
-### `super-ai.conf` reference
+### `sunstone.conf` reference
 
-Location: `<memory-repo>/claude-setup/config/super-ai.conf`. Optional; every consumer works with
+Location: `<memory-repo>/claude-setup/config/sunstone.conf`. Optional; every consumer works with
 it absent.
 
 Format: POSIX `KEY=VALUE`, one per line. **Whitespace around the `=` is accepted**, so
@@ -454,7 +454,7 @@ unguarded by word-splitting.
 | `MEMORY_DIR` | `claude-setup/memory` | `ai-memory-commit` (what gets staged), `pre-commit` (what counts as a memory path), `memory-doctor`. Relative to the memory repo. |
 | `MEMORY_FILE` | `claude-setup/memory/ABOUT-ME.md` | `ai-memory-sync` (what gets injected). Relative to the memory repo. If absent, `MEMORY.md` inside `MEMORY_DIR` is tried; if that is absent too, nothing is injected and the hook exits 0. |
 | `MEMORY_REPOS` | basename of the memory repo's `origin` URL, `.git` stripped — or of its checkout directory when it has no `origin` | `pre-commit`: the repos in which a commit mixing `MEMORY_DIR` paths with other paths is refused. Space-separated list, so a repo name containing a space cannot be listed. |
-| `GUARDED_REPOS` | `super-ai <that same basename>` | `pre-push`: the repos in which a push that rewrites or deletes remote history is refused. Space-separated list, so a repo name containing a space cannot be listed. |
+| `GUARDED_REPOS` | `sunstone <that same basename>` | `pre-push`: the repos in which a push that rewrites or deletes remote history is refused. Space-separated list, so a repo name containing a space cannot be listed. |
 | `MEMORY_INDEX` | `claude-setup/memory/MEMORY.md` | `memory-doctor`: the index whose links are checked against the files in `MEMORY_DIR`. |
 | `MEMORY_META_FILES` | empty | `memory-doctor` only: space-separated basenames inside `MEMORY_DIR` that are structure rather than memories (a template, a changelog). They are never reported as unindexed and never counted as memory files. The basenames of `MEMORY_INDEX` and `MEMORY_FILE`, plus `README.md`, are always treated this way, whether or not they are listed. Space-separated, so a filename containing a space cannot be listed; a value written with a directory part still counts by its basename. |
 | `PROJECT_ROOTS` | empty | `memory-doctor` only: space-separated directories, `~` allowed, under which the doctor may look for `<project>/docs/ai-memory/` repo stores when a working-tier slug resolves to a project inside one of them. Empty keeps the slug resolution the doctor does today and adds no scanning. Space-separated, so a directory whose path contains a space cannot be listed. A listed directory that does not exist on this machine is reported as INFO, not an error — the same conf is meant to be shared across machines. |
@@ -477,12 +477,12 @@ is what makes a local-only memory repo guarded rather than silently unguarded:
 Example:
 
 ```sh
-# super-ai.conf
+# sunstone.conf
 MEMORY_DIR=notes
 MEMORY_FILE=notes/ABOUT-ME.md
 MEMORY_INDEX=notes/INDEX.md
 MEMORY_REPOS="my-memory"
-GUARDED_REPOS="super-ai my-memory team-notes"
+GUARDED_REPOS="sunstone my-memory team-notes"
 MEMORY_META_FILES="TEMPLATE.md CHANGELOG.md"   # structure inside notes/, not memories
 PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores may be found
 ```
@@ -529,9 +529,9 @@ PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores ma
 4. `git config --global --get core.hooksPath` prints `~/.git-hooks` (expanded).
 5. Force-push guard, against a throwaway **local** remote. The guard keys on the repo name, which
    for a path remote is the basename of the path minus `.git`, so name the bare repo after a
-   guarded one (`super-ai` is guarded by default):
+   guarded one (`sunstone` is guarded by default):
    ```bash
-   d=$(mktemp -d) && git init -q --bare "$d/super-ai.git" && git clone -q "$d/super-ai.git" "$d/wc" && cd "$d/wc"
+   d=$(mktemp -d) && git init -q --bare "$d/sunstone.git" && git clone -q "$d/sunstone.git" "$d/wc" && cd "$d/wc"
    git commit -q --allow-empty -m one && git commit -q --allow-empty -m two && git push -q -u origin HEAD
    git reset -q --hard HEAD~1 && git push --force        # refused with ⛔ pre-push
    ALLOW_FORCE_PUSH=1 git push --force                   # the override goes through
@@ -597,7 +597,7 @@ it needs in order to run.
 ## Updating
 
 ```bash
-cd super-ai && git pull && ./setup.sh
+cd sunstone && git pull && ./setup.sh
 ```
 
 **A `git pull` of this repo changes nothing that runs.** Every hook executes from a copy under
@@ -614,12 +614,12 @@ not want to re-run the whole script, copy the changed file into place by hand an
 powershell -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo git@github.com:alice/my-memory.git
 ```
 
-`SUPER_AI_MEMORY_REPO` is honoured as well. Differences from the shell version — and, third
+`SUNSTONE_MEMORY_REPO` is honoured as well. Differences from the shell version — and, third
 bullet, one thing that is deliberately *not* one, because this file used to claim it was:
 
 - Windows ships neither `python3` nor a POSIX shell for Claude Code hooks, so the Claude Code
   hooks are installed as their Node ports, `ai-memory-sync.js` and `ai-memory-commit.js`, and
-  Node is required. They read the same `ai-memory-path`, the same `super-ai.conf`, and behave
+  Node is required. They read the same `ai-memory-path`, the same `sunstone.conf`, and behave
   identically. The doctor notice has no Node port shipped today, so `setup.ps1` installs the
   POSIX `memory-doctor-notice.sh` and registers it as `bash "...\memory-doctor-notice.sh"`, run by
   Git for Windows' shell; it prefers a `.js` port whenever one is shipped beside it.
@@ -670,7 +670,7 @@ hand: `bash ~/.claude/hooks/ai-memory-sync.sh` should print a JSON envelope (or 
 `python3`). `memory-doctor` asks all of these questions for you.
 
 **The doctor notice never appears.** Run `node <framework>/claude-setup/scripts/memory-doctor.js
---brief`; empty output means there is nothing to say. Otherwise check that `~/.claude/super-ai-path`
+--brief`; empty output means there is nothing to say. Otherwise check that `~/.claude/sunstone-path`
 names a checkout that still contains `claude-setup/scripts/memory-doctor.js`, that `node` is
 resolvable from a non-interactive shell (an nvm shell function is not), that
 `~/.claude/.memory-doctor-off` does not exist, and that `~/.claude/.memory-doctor-last` is older
@@ -722,7 +722,7 @@ another hook, most likely the repo's own, which the shipped `pre-commit` chains 
 worktree's own directory name. Check it matches an entry in `MEMORY_REPOS` / `GUARDED_REPOS`, and
 remember a renamed remote changes the name even when the folder keeps the old one. A name
 containing a space cannot be put in either list at all (see
-[`super-ai.conf` reference](#super-aiconf-reference)); only the derived default handles one.
+[`sunstone.conf` reference](#sunstoneconf-reference)); only the derived default handles one.
 
 ---
 
@@ -764,7 +764,7 @@ rm -f ~/.claude/statusline-command.sh ~/.claude/statusline-command.js
 rm -f ~/.claude/agents/architect.md ~/.claude/agents/verify.md
 # The OpenCode plugin the framework ships.
 rm -f ~/.opencode/plugins/graphify.js
-rm -f ~/.claude/ai-memory-path ~/.claude/super-ai-path ~/.claude/.memory-doctor-last ~/.claude/.memory-doctor-off
+rm -f ~/.claude/ai-memory-path ~/.claude/sunstone-path ~/.claude/.memory-doctor-last ~/.claude/.memory-doctor-off
 
 # 3. The global CLAUDE.md setup replaced (every run rewrites it from CLAUDE.global.md)
 ls ~/.claude/CLAUDE.md.bak.* 2>/dev/null    # mv the newest one back to ~/.claude/CLAUDE.md,
