@@ -657,8 +657,10 @@ not want to re-run the whole script, copy the changed file into place by hand an
 pwsh -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo git@github.com:alice/my-memory.git
 ```
 
-⛔ **`pwsh`, not `powershell`.** PowerShell 7 is a separate install from the Windows Powershell 5.1
-that ships with the OS, and `setup.ps1` does not parse under 5.1.
+⛔ **`pwsh`, not `powershell`.** PowerShell 7 is a separate install from the Windows PowerShell 5.1
+that ships with the OS, and `setup.ps1` does not parse under 5.1. If you do not have it:
+`winget install Microsoft.PowerShell`. Check with `pwsh -NoProfile -Command
+'$PSVersionTable.PSVersion.ToString()'` — 7.x is what you want.
 
 `SUNSTONE_MEMORY_REPO` is honoured as well. Differences from the shell version — and, third
 bullet, one thing that is deliberately *not* one, because this file used to claim it was:
@@ -845,8 +847,17 @@ it replaced.
 **Residue in repos created during the install.** While `init.templateDir` was set, every repo you
 cloned or `git init`ed received its own copies of `pre-commit` and `pre-push` in `.git/hooks/`.
 Unsetting `core.hooksPath` makes those copies live repo-local hooks: they keep guarding, and they
-shadow a `husky`-style hook a project later tries to install there. Find and remove them where you
-do not want them:
+shadow a `husky`-style hook a project later tries to install there.
+
+⚠️ **The residue bites before you unset anything.** The shipped hooks deliberately chain to
+`<repo>/.git/hooks/<hook>` at the end, so with `core.hooksPath` still set the global hook runs
+**and then execs the repo-local copy** — both fire, and you see the guard's message printed twice.
+That is the symptom to recognise: a duplicated `pre-push` or `pre-commit` warning means this repo
+has template residue, not that the guard is broken. Worse, the copies are frozen at whatever
+generation was current when the repo was created, so an old one can still be matching a stale
+repo-name list while the global copy reads your current `sunstone.conf`.
+
+Find and remove them where you do not want them:
 
 ```bash
 grep -ls 'ALLOW_FORCE_PUSH\|ALLOW_MIXED_COMMIT' ~/src/*/.git/hooks/pre-commit ~/src/*/.git/hooks/pre-push 2>/dev/null
