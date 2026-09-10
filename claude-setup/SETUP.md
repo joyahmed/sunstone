@@ -662,6 +662,29 @@ that ships with the OS, and `setup.ps1` does not parse under 5.1. If you do not 
 `winget install Microsoft.PowerShell`. Check with `pwsh -NoProfile -Command
 '$PSVersionTable.PSVersion.ToString()'` — 7.x is what you want.
 
+⛔ **`setup.ps1` has never been executed, and there is currently no safe way to test it.** This is
+the one claim in this runbook resting on inference rather than evidence, and it is deliberately
+left that way rather than settled carelessly — because settling it destroys what it tests:
+
+- There is **no `-WhatIf`, no `-DryRun`, no `SupportsShouldProcess`**, and `$ErrorActionPreference
+  = "Stop"`. It begins writing early and there is no safe partial invocation.
+- It **force-overwrites `CLAUDE.md`** in two places — `$HomeDir\CLAUDE.md` and
+  `$ClaudeDir\CLAUDE.md`.
+- It runs **`Remove-Item -Recurse -Force`** on each skill directory before re-copying, across four
+  roots, and recursively deletes broken symlinks and empty directories under them first.
+- It **rewrites `~/.claude/ai-memory-path`**.
+- Its backup helper uses `Copy-Item -Recurse … -ErrorAction SilentlyContinue`, so it **fails
+  quietly** — and `Copy-Item -Recurse` over these paths is precisely the operation known to break
+  on Windows. Do not rely on it.
+
+⭐ **The fix worth building is a `-Prefix` parameter**, redirecting `$HomeDir` and the derived
+paths at a scratch directory. That turns "does it run?" into a real end-to-end test anyone can run
+on any machine with nothing of their own at risk, and it is the only thing that makes this claim
+permanently verifiable instead of permanently inferred. Until that exists, **do not run
+`setup.ps1` to find out whether it runs** — and be especially careful that the copy you are
+looking at is the current one, since an older checkout installs an older generation over a working
+setup.
+
 `SUNSTONE_MEMORY_REPO` is honoured as well. Differences from the shell version — and, third
 bullet, one thing that is deliberately *not* one, because this file used to claim it was:
 
