@@ -1,14 +1,23 @@
 # sunstone
 
-A portable memory layer for Claude Code, plus two git hooks that keep it safe when several
-sessions write to the same repo at once. Every session starts by pulling your private memory repo
-and injecting one file from it into context; everything a session writes back into the memory
-tree is committed when the session ends. The framework itself is plumbing — it ships no skills,
-no slash commands and no statusline; the personal half lives in a repo you own. Two third-party
-conveniences do still ship in the settings template — a graphify hint on `Bash` searches and a
-context-mode cache self-heal at SessionStart — and both are listed under [What the framework
-deliberately does not ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship),
-with how to drop them.
+**Your agent's memory is a git repo you own.** Carry it to a new machine, run the installer, and
+what you know grows back around you — your memory, and whatever skills, commands and hooks you
+keep beside it. No API, no vendor, no database, nothing to sign up for. The machine can die
+because the knowledge was never stored on it.
+
+> *A sunstone is the crystal Jor-El used to preserve Kryptonian knowledge past the destruction of
+> the planet. Kal-El inherits one, and planting it grows the whole Fortress of Solitude back.*
+
+Concretely: a portable memory layer for Claude Code — its two session hooks are Claude Code hooks
+— plus an overlay that carries your skills and config to Codex and OpenCode as well, and two git
+hooks that keep the memory repo safe when several sessions write to it at once. Every session
+starts by pulling your private memory repo and injecting one file from it into context;
+everything a session writes back into the memory tree is committed when the session ends. The
+framework itself is plumbing — it ships no skills, no slash commands and no statusline; the
+personal half lives in a repo you own. Two third-party conveniences do still ship in the settings
+template — a graphify hint on `Bash` searches and a context-mode cache self-heal at SessionStart —
+and both are listed under [What the framework deliberately does not
+ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship), with how to drop them.
 
 ## The two-repo model
 
