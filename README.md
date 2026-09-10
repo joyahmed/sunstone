@@ -63,10 +63,11 @@ WSL; `setup.ps1` covers native Windows and is described under
 reviewed and its divergences are handled, but **it has not been run on a Mac yet**. `setup.ps1`
 parses cleanly and every parameter binds **under PowerShell 7** — ⚠️ **it does not parse under
 Windows PowerShell 5.1**, so `pwsh` is required, not the `powershell` that ships with Windows —
-and **it has never been executed at all**. ⛔ Do not settle that by running it against your own
-home directory: it overwrites `CLAUDE.md`, replaces skill directories with `Remove-Item -Recurse
--Force`, and rewrites `~/.claude/ai-memory-path`, with no `-WhatIf` and no dry run. There is
-currently no safe way to test it end to end — see
+and it has been **executed exactly once**, on 2026-09-11, where it **aborted partway** on a bug
+now fixed (`Get-TreeSignature` let `Get-FileHash` throw on an unreadable file). A completed run is
+still outstanding, so treat Windows as expected-to-work rather than proven. ⚠️ It overwrites
+`CLAUDE.md`, replaces skill directories whole, and rewrites `~/.claude/ai-memory-path`, with no
+`-WhatIf` and no dry run — back those up yourself before a first run, and see
 [Windows](claude-setup/SETUP.md#windows). Treat those two as expected-to-work rather than proven, and if
 you are the first to try one, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
 

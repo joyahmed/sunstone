@@ -662,16 +662,32 @@ that ships with the OS, and `setup.ps1` does not parse under 5.1. If you do not 
 `winget install Microsoft.PowerShell`. Check with `pwsh -NoProfile -Command
 '$PSVersionTable.PSVersion.ToString()'` — 7.x is what you want.
 
-⛔ **`setup.ps1` has never been executed, and there is currently no safe way to test it.** This is
-the one claim in this runbook resting on inference rather than evidence, and it is deliberately
-left that way rather than settled carelessly — because settling it destroys what it tests:
+⚠️ **`setup.ps1` has been executed exactly once — 2026-09-11 — and it aborted partway.** The cause
+was a bug in this repo, now fixed: `Get-TreeSignature` let `Get-FileHash` throw, and under
+`$ErrorActionPreference = "Stop"` a single unreadable file killed the whole install. It died on
+`~\.codex\skills\agile-product-owner\agile-product-owner\SKILL.md` with *"The file cannot be
+accessed by the system."*
+
+⭐ **The unreadable files are WSL-created symlinks, and our own docs caused them.** Reparse tag
+`0xA000001D` is `IO_REPARSE_TAG_LX_SYMLINK`; Win32 returns error 1920 because the tag is
+Linux-specific. Git-bash resolves them, PowerShell cannot. They land on `C:` whenever a recursive
+copy is run **from inside WSL** — which is the documented workaround for the 9P-share copy
+failure. So any machine set up that way already has this residue, and the failing side is the
+**destination**, not the clone. Cloning natively on `C:` is still right; it just cannot prevent
+this. An unreadable file now folds into the signature as a sentinel, which reads as "differs" and
+routes to backup-then-replace.
+
+A **completed** run is still outstanding. Until one is reported, treat Windows as
+expected-to-work, not proven. Before a first run, back these up yourself rather than trusting the
+script — its own backup helper uses `-ErrorAction SilentlyContinue` and can fail quietly:
 
 - There is **no `-WhatIf`, no `-DryRun`, no `SupportsShouldProcess`**, and `$ErrorActionPreference
   = "Stop"`. It begins writing early and there is no safe partial invocation.
 - It **force-overwrites `CLAUDE.md`** in two places — `$HomeDir\CLAUDE.md` and
   `$ClaudeDir\CLAUDE.md`.
-- It runs **`Remove-Item -Recurse -Force`** on each skill directory before re-copying, across four
-  roots, and recursively deletes broken symlinks and empty directories under them first.
+- It runs **`Remove-Item -Recurse -Force`** on each skill directory before re-copying, across the
+  three skill roots (`~\.codex\skills`, `~\.config\opencode\skills`, `~\.claude\skills`) — though
+  a differing tree is backed up first, so this is replace-with-backup rather than plain deletion.
 - It **rewrites `~/.claude/ai-memory-path`**.
 - Its backup helper uses `Copy-Item -Recurse … -ErrorAction SilentlyContinue`, so it **fails
   quietly** — and `Copy-Item -Recurse` over these paths is precisely the operation known to break

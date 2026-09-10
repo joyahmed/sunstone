@@ -79,7 +79,36 @@ function Get-TreeSignature {
     $lines = @()
     foreach ($f in (Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue)) {
         $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/')
-        $lines += "$rel|$((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash)"
+        # ⛔ Get-FileHash MUST NOT be allowed to throw here. This function only
+        # decides "same or different"; it is not a integrity check, and it has
+        # no business aborting an install. Under $ErrorActionPreference = "Stop"
+        # a single unreadable file used to kill the whole run — which is exactly
+        # what happened on the first end-to-end Windows run (2026-09-11):
+        #   Get-FileHash: The file cannot be accessed by the system. :
+        #   '…\.codex\skills\agile-product-owner\agile-product-owner\SKILL.md'
+        # Those are WSL-created symlinks (reparse tag 0xA000001D,
+        # IO_REPARSE_TAG_LX_SYMLINK). Win32 returns error 1920 for them because
+        # the tag is Linux-specific; git-bash resolves them, PowerShell cannot.
+        # They get onto C: whenever a recursive copy is run from inside WSL —
+        # which is the documented workaround for the 9P-share copy failure, so
+        # this residue is self-inflicted by our own advice and WILL be present
+        # on machines set up that way.
+        #
+        # An unreadable file folds in as a sentinel instead. The source tree
+        # comes from a git clone and is always readable, so the sentinel makes
+        # the two signatures differ — which routes to backup-then-replace, the
+        # safe outcome. It does NOT make an unchanged tree look changed on a
+        # re-run, so this adds no .bak clutter.
+        try {
+            $lines += "$rel|$((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash)"
+        } catch {
+            $lines += "$rel|UNREADABLE"
+            if (-not $script:UnreadableWarned) { $script:UnreadableWarned = @{} }
+            if (-not $script:UnreadableWarned.ContainsKey($f.FullName)) {
+                $script:UnreadableWarned[$f.FullName] = $true
+                Write-Host "    note: unreadable, treated as changed: $($f.FullName)"
+            }
+        }
     }
     return (($lines | Sort-Object) -join "`n")
 }
