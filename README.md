@@ -4,8 +4,11 @@ A portable memory layer for Claude Code, plus two git hooks that keep it safe wh
 sessions write to the same repo at once. Every session starts by pulling your private memory repo
 and injecting one file from it into context; everything a session writes back into the memory
 tree is committed when the session ends. The framework itself is plumbing — it ships no skills,
-no slash commands, no statusline and no opinions about your other tools; the personal half lives
-in a repo you own.
+no slash commands and no statusline; the personal half lives in a repo you own. Two third-party
+conveniences do still ship in the settings template — a graphify hint on `Bash` searches and a
+context-mode cache self-heal at SessionStart — and both are listed under [What the framework
+deliberately does not ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship),
+with how to drop them.
 
 ## The two-repo model
 
@@ -16,15 +19,19 @@ in a repo you own.
 
 The framework never assumes a name, a path or a layout for your memory repo beyond
 [the minimum](claude-setup/SETUP.md#the-memory-repo). Its clone path is recorded in the
-single-line file `~/.claude/ai-memory-path`; every hook reads that file and exits silently when
-it is missing, so a machine without a memory repo runs the hooks as no-ops. A second single-line
+single-line file `~/.claude/ai-memory-path`; the two memory hooks read that file, fall back to
+`~/.ai-memory`, and exit silently only when neither is a git repo — so a machine with no memory
+repo runs them as no-ops. (The force-push guard is the one exception: it protects a repo named
+`sunstone` even on a machine that has no memory repo at all.) A second single-line
 file, `~/.claude/sunstone-path`, records where this framework checkout lives, so hooks that are
 copies can still find `memory-doctor` in it. Both files are read whole and trimmed, never split
 on spaces, so a path containing a space works.
 
 Anything that is a *preference* rather than the memory layer — a statusline, another tool's
-auto-updater setting, guidance about a third-party CLI — is deliberately not shipped here and
-reaches your machine through the overlay instead. The reasoning, and the bug that taught it, are
+auto-updater setting, prose telling an assistant which third-party CLI to reach for — is
+deliberately not shipped here and reaches your machine through the overlay instead. (The two
+template hooks named above are the surviving exception, and they are inert until the tool they
+serve is present.) The reasoning, and the bug that taught it, are
 in [What the framework deliberately does not
 ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship).
 
@@ -41,7 +48,7 @@ WSL; `setup.ps1` covers native Windows and is described under
 | **Linux** | `setup.sh` | Nothing in particular. This is the most-exercised path. |
 | **WSL** | `setup.sh` | Treated as Linux, and it is one — a WSL checkout is a Linux checkout. Only the Windows side of the same machine needs `setup.ps1`, and only if you also run Claude Code natively there. |
 | **macOS** | `setup.sh` | No `python3` (it arrives with the Xcode command line tools), so the settings template is merged by `node` instead; no `timeout`, so the SessionStart hook bounds git itself rather than running unbounded. `/bin/bash` is 3.2 — nothing here uses a bash 4 feature. BSD `date`, `readlink` and `sort` differ from GNU and each use falls back. |
-| **Windows** | `setup.ps1` | No `python3`, so the two session hooks install as their Node ports (`node` is required for them; the rest of the install proceeds without it). The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell — nothing extra to install. |
+| **Windows** | `setup.ps1` | No `python3`, so the two session hooks install as their Node ports (`node` is required for them, and — with no `python3` here — for the `settings.json` template merge too; the git hooks, global `CLAUDE.md` and subagent files land without it). The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell — nothing extra to install. |
 
 ⚠️ **Honest status.** Linux and WSL are verified by running the installer end to end. macOS is
 reviewed and its divergences are handled, but **it has not been run on a Mac yet**. `setup.ps1`
@@ -94,7 +101,10 @@ Windows: `powershell -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo <url-or
 
 Eleven steps, run once from the framework root and again from your memory repo. In summary:
 
-- **three Claude Code hooks** in `~/.claude/hooks/`, registered in `~/.claude/settings.json`;
+- **six hook scripts** in `~/.claude/hooks/` — `ai-memory-sync` and `ai-memory-commit` (each with
+  its Node port), `memory-doctor-notice.sh`, and `context-mode-cache-heal.mjs` — producing five
+  registered entries in `~/.claude/settings.json`: the three memory hooks, plus the settings
+  template's own `PreToolUse` and `SessionStart` pair;
 - **two git hooks** in `~/.git-hooks/` (and the clone-time template `~/.git-templates/hooks/`),
   reached by a global `core.hooksPath`;
 - **`~/.claude/CLAUDE.md`**, rewritten on every run from the shipped `CLAUDE.global.md` — 27
@@ -118,7 +128,9 @@ behaviour: what lands is decided by what the two roots ship, not by switches.
 replaces a whole `<name>` directory rather than merging it, backing up a differing one beside
 itself first. Re-running it is also how an update takes effect: **`git pull` on this repo changes
 nothing that runs**, because every hook executes from a copy under `~/.claude/hooks/`,
-`~/.git-hooks/` or `~/.git-templates/hooks/`. `memory-doctor`'s wiring check reports that drift.
+`~/.git-hooks/` or `~/.git-templates/hooks/`. `memory-doctor`'s wiring check reports that drift
+for the memory hooks under `~/.claude/hooks/`; it never reads the two installed git guards, so
+drift in those is only ever fixed by re-running `setup.sh`.
 On a machine already set up, a bare `./setup.sh` is enough — the memory repo is remembered.
 
 ```bash
@@ -131,14 +143,16 @@ Every hook fails silently by design: no repo, no network, no `python3`, no `node
 still starts and the commit or push still goes through. That is the right call for one session
 and the wrong call for a month, which is what `memory-doctor` is for. **Why each hook is shaped
 the way it is** — the failure each one prevents, and the cases each deliberately stands down for
-— is in [Why the hooks are shaped this
-way](claude-setup/SETUP.md#why-the-hooks-are-shaped-this-way).
+— is in [Guard semantics](claude-setup/SETUP.md#guard-semantics) for the two git hooks, and in
+[The doctor notice hook](claude-setup/SETUP.md#the-doctor-notice-hook) and [Checking it still
+works](claude-setup/SETUP.md#checking-it-still-works) for the session hooks. Each script's own
+header comment carries the same reasoning at the point of use.
 
 | Hook | Event | What it does |
 |---|---|---|
 | `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, then injects `MEMORY_FILE` as context. Every network call is time-bounded. |
 | `ai-memory-commit` | Claude Code **SessionEnd** | Commits anything changed under `MEMORY_DIR`, staged **by path** and nothing else, with `--no-verify`; then fires a detached, time-bounded push and returns without waiting for it. Refuses to run at all mid-merge, mid-cherry-pick, mid-rebase or on a detached HEAD. |
-| `memory-doctor-notice` | Claude Code **SessionStart** | Injects at most one line from `memory-doctor --brief`, at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
+| `memory-doctor-notice` | Claude Code **SessionStart** | Injects a short notice from `memory-doctor --brief` — a summary line plus up to three WARN lines — at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
 | `pre-commit` | git, via global `core.hooksPath` | In `MEMORY_REPOS`, refuses a commit that stages paths both inside and outside `MEMORY_DIR`. Stands down entirely while git is mid-merge, cherry-pick, revert or rebase. Override: `ALLOW_MIXED_COMMIT=1 git commit`. |
 | `pre-push` | git, via global `core.hooksPath` | In `GUARDED_REPOS`, refuses any push that is not a fast-forward, any branch deletion, and any push whose remote tip is not in the local object store at all. Override: `ALLOW_FORCE_PUSH=1 git push`. |
 

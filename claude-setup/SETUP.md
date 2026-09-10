@@ -38,8 +38,11 @@ others are `SUNSTONE_PUSH_TIMEOUT` for the SessionEnd push and the two guard ove
 `ALLOW_MIXED_COMMIT` and `ALLOW_FORCE_PUSH`, none of which setup reads. With no repo given,
 `setup.sh` running in a terminal asks for one — Enter keeps the clone already recorded in
 `~/.claude/ai-memory-path`, or skips when there is none. Without a terminal it keeps the recorded
-clone, or skips and prints the `--memory-repo` re-run line; the hooks are installed either way and
-stay silent until `ai-memory-path` (or `~/.ai-memory`) names a git repo.
+clone, or skips and prints the `--memory-repo` re-run line; the hooks are installed either way.
+The session hooks and the mixed-staging guard stay silent until `ai-memory-path` (or
+`~/.ai-memory`) names a git repo — but `pre-push` does not: it guards a repo whose remote
+basename is `sunstone` even on a machine with no memory repo and no config at all, so the
+framework's own force-push protection never silently vanishes on a half-set-up box.
 
 Order matters and is deliberate: the memory repo is resolved **first** — cloned, or checked to
 be a git repo — and only then does setup touch the global git config, `~/.git-hooks` or
@@ -101,11 +104,11 @@ clutter — the same rule the per-file copy helper applies.
 
 | Target | Source in this repo | Purpose |
 |---|---|---|
-| `~/.claude/ai-memory-path` | written from `--memory-repo` / `SUNSTONE_MEMORY_REPO` / the prompt | One line: the absolute path of the memory repo clone. Every hook reads it and exits silently when it is missing. Not written with `--skip-memory` or when no repo was given. |
+| `~/.claude/ai-memory-path` | written from `--memory-repo` / `SUNSTONE_MEMORY_REPO` / the prompt | One line: the absolute path of the memory repo clone. The two memory hooks read it, fall back to `~/.ai-memory` when it is missing, and exit silently only when neither is a git repo. Not written with `--skip-memory` or when no repo was given. |
 | the memory repo clone | `git clone` of the URL you gave, into `~/.ai-memory` or `--clone-to` | Only when a URL was given and no clone exists there yet. A local path is used in place and nothing is cloned. |
 | `~/.claude/hooks/ai-memory-sync.sh` | `claude-setup/config/hooks/ai-memory-sync.sh` | SessionStart: pull, push last session's commits, inject `MEMORY_FILE`. |
-| `~/.claude/hooks/ai-memory-commit.sh` | `claude-setup/config/hooks/ai-memory-commit.sh` | SessionEnd: commit `MEMORY_DIR` by path. Never pushes. |
-| `~/.claude/hooks/memory-doctor-notice.sh` | `claude-setup/config/hooks/memory-doctor-notice.sh` | SessionStart: one throttled line from `memory-doctor --brief`, or nothing. |
+| `~/.claude/hooks/ai-memory-commit.sh` | `claude-setup/config/hooks/ai-memory-commit.sh` | SessionEnd: commit `MEMORY_DIR` by path, then fire a detached, time-bounded `git push` (`SUNSTONE_PUSH_TIMEOUT`, default 20s) and return without waiting for it. Skipped outright when the branch has no upstream; a rejected push is normal and silent, and the next SessionStart pulls and pushes properly. |
+| `~/.claude/hooks/memory-doctor-notice.sh` | `claude-setup/config/hooks/memory-doctor-notice.sh` | SessionStart: a throttled notice from `memory-doctor --brief` — a summary line plus up to three WARN lines — or nothing. |
 | `~/.claude/sunstone-path` | the directory `setup.sh` was run from | One line: the framework checkout. The notice hook runs `memory-doctor.js` from there, because the hook itself is a copy and cannot find the checkout from its own location. Move or delete the checkout and the notice goes quiet (nothing else breaks). |
 | `~/.claude/settings.json` | merged by `claude-setup/config/merge-ai-memory-hook.py`, needs `python3` | Adds `ai-memory-sync.sh` and `memory-doctor-notice.sh` under `SessionStart` and `ai-memory-commit.sh` (async) under `SessionEnd`, each only if not already present. Every other key and hook is kept. Backed up first; the backup is removed again when the merge changed nothing. This is the one step with no Node fallback — without `python3` the three commands are printed instead, and the template merge two rows down still runs. |
 | `~/.git-hooks/pre-commit`, `~/.git-hooks/pre-push` | `claude-setup/config/git-hooks/` | The mixed-staging guard and the force-push guard. |
@@ -135,9 +138,10 @@ untouched.
 Three things used to be installed from this root and are not any more, and the reason is the same
 one in all three cases: **they are preferences, not the memory layer.** A framework a stranger
 clones and runs should not decide what their prompt looks like, how another tool updates itself,
-or which third-party CLIs they are told to reach for. All three now live in a personal repo and
+or which third-party CLIs they are told to reach for. They now live in a personal repo and
 arrive through [the overlay](#the-overlay-your-own-skills-commands-and-hooks), where carrying the
-file is the opt-in and nobody inherits anyone else's taste.
+file is the opt-in and nobody inherits anyone else's taste — with one honest exception, noted in
+the third bullet, that still ships from this root.
 
 - **The statusline.** `claude-setup/config/statusline.sh`, `statusline-command.sh` and
   `statusline-command.js` are gone from this repo. `step_statusline` still exists and still runs
@@ -150,6 +154,15 @@ file is the opt-in and nobody inherits anyone else's taste.
   `context-mode` and `graphify` were removed: a memory layer has no business teaching an
   assistant about tools it does not install. The `plugins/` directory (and the OpenCode plugin
   in it) went the same way.
+
+  ⚠️ **This one is not finished.** Two third-party hooks still ship from this root, in
+  `claude-setup/config/settings.json`: a `PreToolUse` hint on `Bash` that points grep-style
+  searches at `graphify-out/GRAPH_REPORT.md`, and a `SessionStart` entry running
+  `context-mode-cache-heal.mjs`. The first injects prose about graphify into the model's context
+  whenever a graph exists; the second requires `node` and a tool the framework does not install.
+  Both are inert without their tool, but neither is the memory layer, and by the reasoning above
+  both belong in a personal template rather than here. Delete the two entries from
+  `~/.claude/settings.json` if you do not use those tools.
 
 ⚠️ **The `statusLine` key and the statusline script must ship from the same root.** This is not a
 style rule; it is the most-reported bug in this repo's history. The framework's settings template
@@ -212,14 +225,19 @@ hooks, not this one, so a broken notice hook is only visible as an absent notice
 `claude-setup/install.sh` is unrelated to the memory layer and optional. It walks the same two
 roots as `setup.sh` (framework, then memory repo; `--skip-overlay` applies here too) and repeats
 the same non-memory steps — **all ten** of them, the statusline slot included. On a machine where
-`setup.sh` has already run it therefore changes nothing:
-every step finds an identical file and leaves it alone. Note what that looks like on screen — it
-is not silence. Each step still prints its ordinary `<step>: from <root>` line, because that line
-reports which root supplied the files, not whether they were rewritten; the only step that says
-`no change` in so many words is the settings merge, which prints it because the merger reports its
-own diff. A second run that changed nothing and a first run that installed everything therefore
-look almost identical, and the way to tell them apart is that the second leaves no
-`*.bak.<timestamp>` files behind. It exists for re-applying the extras alone. What it changes:
+`setup.sh` has already run it therefore changes nothing. Note what that looks like on screen — it
+is not silence, and it is not ten `from framework` lines either. From the framework root only four
+steps have a source file to copy at all — subagents, hooks, settings and `CLAUDE.global.md` — and
+those print their ordinary `<step>: from <root>` line, because that line reports which root
+supplied the files, not whether they were rewritten. The other six (statusline, skills, agents,
+codex, opencode, commands) print `<step>: skipped` on every run, first or second alike, because
+the framework ships nothing for them. The only step that says `no change` in so many words is the
+settings merge, which prints it because the merger reports its own diff.
+
+Do not use backup files to tell a first run from a second. A `*.bak.<timestamp>` appears only
+where `install.sh` replaced a file that already existed **and differed** — so a clean first
+install onto a machine with no `~/.claude` leaves none either, exactly like a no-op second run.
+It exists for re-applying the extras alone. What it changes:
 
 - **`~/.claude/CLAUDE.md` is replaced** by the root's `claude-setup/config/CLAUDE.global.md` —
   the shipped one is 27 lines and carries only the memory rules: which of the three tiers a fact
@@ -255,8 +273,18 @@ look almost identical, and the way to tell them apart is that the second leaves 
   `claude-setup/commands/*.md` → `~/.claude/commands/`; `claude-setup/config/agents/*.md` →
   `~/.claude/agents/`; and every file of `claude-setup/config/hooks/` → `~/.claude/hooks/`,
   executable, `context-mode-cache-heal.mjs` among them. Each file that would be overwritten and
-  differs is backed up as `<file>.bak.<timestamp>` first — with the skills step's `rm -rf` the one
-  exception, exactly as under `setup.sh`.
+  differs is backed up as `<file>.bak.<timestamp>` first — with one exception, and it is **not**
+  the same as `setup.sh`'s.
+
+  ⛔ **`install.sh`'s skills step destroys without a backup.** It runs `rm -rf` on an existing
+  `~/.claude/skills/<name>/` (and the Codex and OpenCode copies) and replaces it, taking no
+  backup first — `install.sh:169-171`. `setup.sh` does back one up: its own skills step calls
+  `backup` whenever the existing directory differs from the incoming tree (`setup.sh:497`), for
+  the express reason that a `<name>/` already there may be a skill **you wrote by hand**, not an
+  older copy of the shipped one. So a hand-written skill whose name collides with one your memory
+  repo ships survives `setup.sh` and is lost to `install.sh`. Until the two agree, prefer
+  `setup.sh`, and copy anything hand-written out of `~/.claude/skills/` before running
+  `install.sh`.
 
 It copies the three memory hook *scripts* — its hooks step ships that whole directory, all six
 files of it, exactly as `setup.sh` does — but it never **registers** them in `settings.json`, and
@@ -280,10 +308,12 @@ python3 claude-setup/config/merge-settings-template.py ~/.claude/settings.json <
 node    claude-setup/config/merge-settings-template.mjs ~/.claude/settings.json <template.json>
 ```
 
-Rules, applied idempotently: for each event under the template's `hooks`, append each entry
-whose command's script basename is not already registered under that event (the same identity
-rule `merge-ai-memory-hook.py` uses, so a `~`-relative and an absolute path to one script count
-as one hook); copy `statusLine` and `env` keys only where the target has none — a capability the
+Rules, applied idempotently: for each event under the template's `hooks`, append each entry that
+no entry under that event already runs — matched either by the **exact command string** or, when
+the command names a script, by that **script's basename** (the same two-part identity rule
+`merge-ai-memory-hook.py` uses, so a `~`-relative and an absolute path to one script count as one
+hook, and the framework's own `PreToolUse` entry — an inline `python3 -c` pipeline naming no
+script — is matched by its command string alone); copy `statusLine` and `env` keys only where the target has none — a capability the
 framework's own template never uses, since it carries neither; **never touch `permissions`**;
 create `settings.json` when it does not exist; exit 0 and print one line per change, or
 `no change`. Commands in a template may use `~` and are written as they are — Claude
@@ -294,10 +324,9 @@ same merge rather than none. `setup.ps1` always uses `node`.
 ### The overlay: your own skills, commands and hooks
 
 The memory repo may carry any of the trees the framework's layout defines, and setup applies it
-as a second install root after the framework. The full tree-by-tree table and a minimal example
-are in the README's
-[Carry your own skills, commands and hooks in the memory repo](../README.md#carry-your-own-skills-commands-and-hooks-in-the-memory-repo);
-operationally:
+as a second install root after the framework. The tree-by-tree list is the "under either root"
+rows of [What setup installs](#what-setup-installs) above — every one of them reads from the
+memory repo exactly as it reads from the framework. Operationally:
 
 - Each overlay step prints `<step>: from <root>` for every root that has the tree, or `skipped`,
   and the final summary repeats the list per root.
@@ -341,9 +370,11 @@ unrelated project keeps running after setup. The header of
 
 The chain resolves the repo's hook through `git rev-parse --git-dir`, never `--git-path hooks`,
 which obeys `core.hooksPath` and would make the hook exec itself. A hook of your own that lived
-in `~/.git-hooks/` before setup ran is a different case: setup replaces it (backup beside it)
-and prints a warning, because its logic no longer runs; move that logic into
-`<repo>/.git/hooks/<hook>`, where the chain reaches it.
+in `~/.git-hooks/` **under one of the shipped names** (`pre-commit`, `pre-push`) is a different
+case: setup replaces it (backup beside it) and prints a warning, because its logic no longer runs;
+move that logic into `<repo>/.git/hooks/<hook>`, where the chain reaches it. A hook of yours under
+any other name — `commit-msg`, `prepare-commit-msg`, `post-checkout` — is left untouched there and
+keeps running, since `core.hooksPath` now points git at that same directory.
 
 A **global** `core.hooksPath` of your own is the third case and the widest one: setup replaces
 the value, so every hook in your old directory stops running, in every repo, at once. Setup says
@@ -377,7 +408,8 @@ my-memory/
 
 Starting from nothing, with one topic file and one index line in the shape `memory-doctor`
 expects (frontmatter `name` = filename, one-line `description`; index line = list item with a
-markdown link — see the README's [Memory file format](../README.md#memory-file-format)):
+markdown link — the **index** and **hygiene** rows of [Checking it still
+works](#checking-it-still-works) are what enforce it):
 
 ```bash
 mkdir my-memory && cd my-memory && git init
@@ -521,10 +553,12 @@ PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores ma
 1. Restart Claude Code. Start a session anywhere. The contents of `MEMORY_FILE` should appear as
    background context (ask "what do you know about me?").
 2. In the memory repo: `git log --oneline -3`. After a session that wrote a memory, a commit
-   `memory: N file(s) from a session — ...` appears after the session ends, and is pushed at the
-   start of the next. A session writes there only if you have told it to — see the README's
-   [Getting sessions to write there](../README.md#getting-sessions-to-write-there); the hooks
-   themselves never ask Claude to write anything.
+   `memory: N file(s) from a session — ...` appears after the session ends and is normally pushed
+   right away by the SessionEnd hook; if that push does not go through, the next SessionStart
+   pulls and pushes it. A session writes there only if something has told it to, and that
+   something is `~/.claude/CLAUDE.md` — installed from `claude-setup/config/CLAUDE.global.md`,
+   whose 27 lines are what explain the memory tiers and the writing rules to the assistant. The
+   hooks themselves never ask Claude to write anything; they only carry what it wrote.
 3. `node claude-setup/scripts/memory-doctor.js` reports no ERROR.
 4. `git config --global --get core.hooksPath` prints `~/.git-hooks` (expanded).
 5. Force-push guard, against a throwaway **local** remote. The guard keys on the repo name, which
@@ -567,7 +601,7 @@ memory can be written into the tier that syncs nowhere, and nothing ever says so
 node claude-setup/scripts/memory-doctor.js            # human report
 node claude-setup/scripts/memory-doctor.js --verbose  # list every item
 node claude-setup/scripts/memory-doctor.js --json     # machine-readable
-node claude-setup/scripts/memory-doctor.js --brief    # one line, or nothing (what the notice hook uses)
+node claude-setup/scripts/memory-doctor.js --brief    # a few lines, or nothing (what the notice hook uses)
 ```
 
 Read-only: it never writes, moves, commits or deletes. Exit code is 1 when there is an ERROR, 0
@@ -586,8 +620,10 @@ otherwise, so it works as a pre-push or CI gate.
 The **wiring** check covers `ai-memory-sync` and `ai-memory-commit` (either the `.sh` or the
 `.js` port counts as installed); it does not check the notice hook.
 
-The SessionStart notice hook runs `--brief` at most once per 20 hours and injects at most one
-line. It prints nothing when the stores are drained and the wiring is sound, so it retires itself
+The SessionStart notice hook injects at most one notice per 20 hours — a summary line plus up to
+three WARN lines, not a single line. The throttle bounds the *notice*, not the run: while the
+stores are clean the doctor prints nothing and writes no stamp, so `--brief` is still executed on
+every session start. It prints nothing when the stores are drained and the wiring is sound, so it retires itself
 once the work is done. Disable it with `touch ~/.claude/.memory-doctor-off`; the stamp file is
 `~/.claude/.memory-doctor-last`. See [The doctor notice hook](#the-doctor-notice-hook) for what
 it needs in order to run.
@@ -624,16 +660,20 @@ bullet, one thing that is deliberately *not* one, because this file used to clai
   POSIX `memory-doctor-notice.sh` and registers it as `bash "...\memory-doctor-notice.sh"`, run by
   Git for Windows' shell; it prefers a `.js` port whenever one is shipped beside it.
   `memory-doctor` itself can always be run by hand.
-- **The statusline differs by platform, and each half is self-consistent.** `setup.ps1` installs
-  `~\.claude\statusline-command.js` and `claude-setup/config/merge-claude-settings.mjs` **sets**
-  the `statusLine` key to it — replacing whatever was there — in the same call that registers the
-  two memory hooks. That runs *before* the template merge, and the template merger copies
-  `statusLine` only where the target has none, so the template's `bash ~/.claude/statusline-command.sh`
-  never lands on Windows and `setup.ps1` does not install the `.sh`. `setup.sh` is the mirror
-  image: it installs `statusline-command.sh` (its first overlay step) and lets the template's key
-  stand. Either way the key and the script it names arrive together — which is the whole point,
-  since a `statusLine` pointing at a file that is not on disk is a per-prompt error nobody asked
-  for. The `.js` port needs no `jq`; the `.sh` one does.
+- **The statusline is a slot on both platforms, and the framework fills neither.** *When a root
+  ships* `claude-setup/config/statusline-command.js`, `setup.ps1` installs it to
+  `~\.claude\statusline-command.js` and passes it to `claude-setup/config/merge-claude-settings.mjs`
+  as an optional last argument, which then **sets** the `statusLine` key to it — replacing whatever
+  was there — in the same call that registers the two memory hooks. From the framework root that
+  argument is never passed, so the merger registers the hooks and writes no `statusLine`.
+  `setup.sh` is the mirror image: `step_statusline` runs first and looks for
+  `claude-setup/config/statusline-command.sh`, which the framework does not ship either, so the
+  step reports `skipped` and nothing is written. There is likewise no template key to collide
+  with — the shipped `settings.json` carries no `statusLine` at all. The rule that matters is
+  unchanged: whoever ships the key ships the script, because a `statusLine` pointing at a file
+  that is not on disk is a per-prompt error nobody asked for. A memory repo filling the slot on
+  POSIX must ship the `statusLine` key in its own template too; on Windows `merge-claude-settings.mjs`
+  sets it from the script path itself. The `.js` port needs no `jq`; the `.sh` one does.
 - **`git` is a hard stop here too, exactly as it is in `setup.sh`.** `setup.ps1` checks for it
   before its banner and throws `git is required and was not found on PATH; nothing has been
   installed.` The two entry points refuse identically on purpose — on this side the alternative
@@ -692,9 +732,12 @@ three states, and the files simply stay on disk for the next session to commit:
   into your next unrelated commit in that repo, or refused outright by the framework's own
   mixed-staging guard.
 
-**Commits are made but never reach the remote.** Pushing happens at the next SessionStart, not at
-SessionEnd. If the branch has no upstream, or the push is rejected twice in a row, the commits
-stay local; `memory-doctor` reports the backlog under **sync**.
+**Commits are made but never reach the remote.** Pushing is attempted at both ends: opportunistically
+at SessionEnd (detached, time-bounded and silent on failure — skipped outright when the branch has
+no upstream), then reliably at the next SessionStart, which pulls first. If the branch has no
+upstream, or both attempts are rejected, the commits stay local. `memory-doctor` reports a missing
+upstream as a **sync** ERROR, and warns under **sync** once more than 20 commits are unpushed; a
+smaller backlog shows only in the header counter (`+N/-N`) and in `--json`.
 
 **`pre-push` refused a push I meant.** Prefer integrating: `git pull --rebase origin <branch> &&
 git push`. If the rewrite is genuinely intended, `ALLOW_FORCE_PUSH=1 git push --force-with-lease`.
@@ -703,9 +746,11 @@ git push`. If the rewrite is genuinely intended, `ALLOW_FORCE_PUSH=1 git push --
 commit ...`. If this happens often, the change is probably not a memory change, and the memory
 files should be committed separately.
 
-**The statusline is blank, or every prompt prints an error about it.** The `statusLine` key and
-the script it names travel together: `setup.sh` installs `~/.claude/statusline-command.sh`,
-`setup.ps1` installs `~/.claude/statusline-command.js`. A blank line usually means `jq` is missing
+**The statusline is blank, or every prompt prints an error about it.** The framework ships no
+statusline, so one on your machine came from your own memory repo's root — or from an install
+predating its removal from this repo. The `statusLine` key and the script it names must travel
+together from the same root: `setup.sh` installs `~/.claude/statusline-command.sh` only when a
+root carries it, and `setup.ps1` the `.js` on the same condition. A blank line usually means `jq` is missing
 (the `.sh` script reads its input with it and renders empty without it) — install `jq`, or delete
 the `statusLine` key from `~/.claude/settings.json` to turn the statusline off. It has nothing to
 do with the memory layer either way.
@@ -748,22 +793,22 @@ cat ~/.claude/git-config.previous 2>/dev/null   # if setup replaced earlier valu
                                                  # git config --global <key> <value>
 rm -f ~/.claude/git-config.previous
 
-# 2. Claude Code: the hook scripts, the statusline and the state files. Setup
-#    ships the whole claude-setup/config/hooks/ directory, not just the three
-#    memory hooks, so all six go here. A personal root may have added more —
-#    see Overlay residue below.
+# 2. Claude Code: the hook scripts and the state files. Setup ships the whole
+#    claude-setup/config/hooks/ directory, not just the three memory hooks, so
+#    all six go here. A personal root may have added more — see Overlay
+#    residue below.
 for h in ai-memory-sync.sh ai-memory-sync.js ai-memory-commit.sh ai-memory-commit.js \
          memory-doctor-notice.sh context-mode-cache-heal.mjs; do
   rm -f ~/.claude/hooks/$h
 done
-# The statusline: setup.sh installs the .sh on every run (setup.ps1 the .js).
-# Remove the statusLine key from settings.json as well — see below — or every
-# prompt runs a command that is no longer there.
+# The statusline: the framework ships none, so these exist only if YOUR memory
+# repo shipped statusline-command.sh (setup.sh) or .js (setup.ps1), or an older
+# version of this framework left one behind. If you remove them, remove the
+# statusLine key from settings.json too — see below — or every prompt runs a
+# command that is no longer there.
 rm -f ~/.claude/statusline-command.sh ~/.claude/statusline-command.js
 # The two subagent files, which pin model: fable.
 rm -f ~/.claude/agents/architect.md ~/.claude/agents/verify.md
-# The OpenCode plugin the framework ships.
-rm -f ~/.opencode/plugins/graphify.js
 rm -f ~/.claude/ai-memory-path ~/.claude/sunstone-path ~/.claude/.memory-doctor-last ~/.claude/.memory-doctor-off
 
 # 3. The global CLAUDE.md setup replaced (every run rewrites it from CLAUDE.global.md)
@@ -776,8 +821,10 @@ Then edit `~/.claude/settings.json` and remove what setup merged in: the two `Se
 entries (`ai-memory-sync.sh`, `memory-doctor-notice.sh`) and the `SessionEnd` entry
 (`ai-memory-commit.sh`), whose shape is in
 [Registering the hooks by hand](#registering-the-hooks-by-hand); and, from the shipped template,
-the third `SessionStart` entry (`context-mode-cache-heal.mjs`), the `PreToolUse` entry on `Bash`,
-the `statusLine` key and any `env` key you did not have (`DISABLE_AUTOUPDATER`). `permissions` was
+the third `SessionStart` entry (`context-mode-cache-heal.mjs`) and the `PreToolUse` entry on
+`Bash`. That is the whole of it: the shipped template carries no `statusLine` and no `env` key, so
+anything of either kind in the file is yours or your memory repo's template's — including an
+`env.DISABLE_AUTOUPDATER`, which older versions of this framework did merge in. `permissions` was
 never touched, so leave it. If the file did not exist before setup ran, the merge created it, and
 the reverse is deleting it rather than editing it. `rmdir ~/.claude/hooks 2>/dev/null` removes the
 directory setup created if nothing else is left in it — a hook the memory repo's own
@@ -797,8 +844,11 @@ grep -ls 'ALLOW_FORCE_PUSH\|ALLOW_MIXED_COMMIT' ~/src/*/.git/hooks/pre-commit ~/
 
 (adjust `~/src/*` to wherever you keep repos; both installed hooks name their override variable).
 
-**Overlay residue.** Step 2 names what the *framework* root ships (the statusline, the six hook
-scripts, the two guards in `~/.git-hooks/`, the two subagent files, `plugins/graphify.js`). Whatever the **memory repo** root added
+**Overlay residue.** Step 2 names what the *framework* root ships (the six hook scripts, the two
+guards in `~/.git-hooks/`, the two subagent files). A statusline and anything under
+`~/.opencode/plugins/` are **not** in that list — the framework leaves both slots empty, so
+whatever is at `~/.claude/statusline-command.*` or `~/.opencode/plugins/*.js` came from your
+memory repo or from an older version of this framework. Whatever the **memory repo** root added
 on top stays until you remove it, and only its own copies say which files those were:
 `~/.claude/skills/<name>`, `~/.codex/skills/<name>` and `~/.config/opencode/skills/<name>` for
 each `skills/<name>/`; `~/.claude/commands/*.md`; any further `~/.claude/agents/*.md`; the hook
@@ -810,13 +860,14 @@ its `.bak.<timestamp>` copy if you had one — `~/.claude/CLAUDE.md` is step 3 a
 
 Left alone on purpose: your memory repo, including a clone `setup.sh` made in `~/.ai-memory` or
 `--clone-to` — it is an ordinary git repo and nothing here owns it. **`install.sh` puts nothing on
-the machine the steps above do not already cover**: every file it writes — the statusline,
-`~/.claude/CLAUDE.md`, the settings template keys, all six scripts of
+the machine the steps above do not already cover**: every file it writes — a memory repo's
+statusline if one is shipped, `~/.claude/CLAUDE.md`, the settings template keys, all six scripts of
 `claude-setup/config/hooks/` (the three memory hooks among them, copied but never registered),
 the `~/.claude/agents/*.md` files, `~/AGENTS.md` and `~/CLAUDE.md`, the skills, commands and
 Codex / OpenCode trees — `setup.sh` writes too, from the same sources. (It has not shipped a second `statusline.sh` since that file was
 deleted as dead; nothing installs one, and a stale `~/.claude/statusline.sh` on your machine came
 from an older version and can go.) Either way you can instead restore the
 `settings.json.bak.<timestamp>` left when a merge changed something. On Windows the files are
-`~\.claude\hooks\ai-memory-sync.js`, `ai-memory-commit.js`, `memory-doctor-notice.sh` and
-`~\.claude\statusline-command.js`, and the `statusLine` key `setup.ps1` set in `settings.json`.
+`~\.claude\hooks\ai-memory-sync.js`, `ai-memory-commit.js` and `memory-doctor-notice.sh` — plus,
+only if a root shipped `claude-setup/config/statusline-command.js`,
+`~\.claude\statusline-command.js` and the `statusLine` key `setup.ps1` then set in `settings.json`.
