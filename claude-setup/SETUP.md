@@ -1,8 +1,10 @@
 # Setup runbook
 
 How `setup.sh` / `setup.ps1` wire the super-ai memory layer into Claude Code on one machine,
-what lands where, how to verify it, and what to do when it goes quiet. The README covers the
-model and the hooks' reasons for existing; this file is the operational detail.
+what lands where, how to verify it, what to do when it goes quiet — and why every piece is
+shaped the way it is. The README is the front door: what this is, what to type, and the smallest
+true mental model. This file is everything behind it, and it is meant to be read by section
+rather than end to end.
 
 Throughout, the example memory repo is `my-memory`, owned by `alice`.
 
@@ -12,7 +14,7 @@ Throughout, the example memory repo is `my-memory`, owned by `alice`.
 
 ```bash
 # 0. Prerequisites below: git (required), sh, Claude Code; python3 and node
-#    recommended; jq only for the statusline
+#    recommended. The framework ships no statusline, so nothing here needs jq.
 # 1. Get the framework (the URL shown on this repository's page; fork only to change it)
 git clone https://github.com/<owner>/super-ai super-ai && cd super-ai
 # 2. Install, naming your memory repo by a URL this machine can already authenticate to
@@ -31,7 +33,9 @@ node claude-setup/scripts/memory-doctor.js
 | `--skip-overlay` | `-SkipOverlay` | Install from the framework root only; ignore any skills, commands, agents, hooks or `settings.json` template the memory repo carries. See [The overlay](#the-overlay-your-own-skills-commands-and-hooks). |
 | `-h`, `--help` | the comment header at the top of `setup.ps1` | Usage. |
 
-Only the memory repo has an environment form. With no repo given,
+The memory repo is the only setting with an environment form (`SUPER_AI_MEMORY_REPO`); the
+others are `SUPER_AI_PUSH_TIMEOUT` for the SessionEnd push and the two guard overrides,
+`ALLOW_MIXED_COMMIT` and `ALLOW_FORCE_PUSH`, none of which setup reads. With no repo given,
 `setup.sh` running in a terminal asks for one — Enter keeps the clone already recorded in
 `~/.claude/ai-memory-path`, or skips when there is none. Without a terminal it keeps the recorded
 clone, or skips and prints the `--memory-repo` re-run line; the hooks are installed either way and
@@ -51,8 +55,8 @@ A WSL checkout is a Linux checkout and needs nothing special — run `setup.sh` 
 `setup.ps1` on the Windows side only if you also run Claude Code natively there.
 
 What each platform is missing by default is covered row by row in [Prerequisites](#prerequisites)
-below; the short version is that macOS ships no `python3`, `jq` or `timeout` and every one of
-those has a fallback, and Windows ships no `python3` so the session hooks install as Node ports.
+below; the short version is that macOS ships neither `python3` nor `timeout` and both have a
+fallback, and Windows ships no `python3` so the session hooks install as Node ports.
 
 ⚠️ **Verified where, honestly:** Linux and WSL are exercised end to end. macOS is reviewed and its
 GNU/BSD divergences are handled, but has not been run on a Mac. `setup.ps1` parses cleanly under
@@ -67,8 +71,8 @@ Windows PowerShell 5.1 with every parameter binding, but has not been run end to
 | **POSIX `sh`** | the git hooks and the Claude Code hooks on Linux/macOS/WSL | Present everywhere but Windows, where Git for Windows supplies it. |
 | **Claude Code** | the SessionStart / SessionEnd hooks | https://claude.com/claude-code — install and `claude login` before running setup. |
 | **python3** | the JSON `additionalContext` envelope in the sync and notice hooks; registering the three memory hooks in `settings.json` | Optional on Linux, but registration is the one step of setup with no Node fallback: `merge-ai-memory-hook.py` has no port, so without `python3` setup prints the three commands to add by hand — see [Registering the hooks by hand](#registering-the-hooks-by-hand) — and the hooks themselves fall back to plain stdout, which Claude Code also adds to context. |
-| **node** | `memory-doctor` and the doctor notice hook; the `settings.json` **template** merge when there is no `python3`; all hooks on Windows | Optional on Linux (the notice hook exits silently without it); required on Windows. A node-only machine is no longer a machine that loses the template merge: `setup.sh` runs `merge-settings-template.mjs` when `python3` is missing, so `statusLine`, `env` and the template's own hooks still land. |
-| **jq** | the statusline, at runtime only | Optional, and needed by nothing in setup itself. `setup.sh` installs `~/.claude/statusline-command.sh` on every run and the merged template points `statusLine` at it; the script reads its input with `jq` and renders an empty line without it. Setup prints a note when `jq` is missing. |
+| **node** | `memory-doctor` and the doctor notice hook; the `settings.json` **template** merge when there is no `python3`; all hooks on Windows | Optional on Linux (the notice hook exits silently without it); required on Windows. A node-only machine is no longer a machine that loses the template merge: `setup.sh` runs `merge-settings-template.mjs` when `python3` is missing, so the template's own hooks still land. |
+| **jq** | nothing the framework ships | **Not a dependency of this framework.** It appears here only because the statusline *slot* is a real one: if **your** memory repo ships `claude-setup/config/statusline-command.sh`, setup installs it and prints a note when `jq` is missing, because that shell script reads its input with `jq` and renders an empty line without it. A framework-only install never puts a statusline on disk and never needs `jq`. |
 
 `setup.sh` itself has no other dependencies: no `jq`, no package manager, and no network access
 after the clone except to clone the memory repo. No `timeout` binary is needed either — the sync
@@ -109,15 +113,15 @@ clutter — the same rule the per-file copy helper applies.
 | `~/.git-templates/hooks/` | the same files as `~/.git-hooks/` | Clone-time template, a fallback if `core.hooksPath` is ever unset by hand. |
 | global git config | `core.hooksPath=~/.git-hooks`, `init.templateDir=~/.git-templates` | Makes the guards reach every repo on the machine, including ones that already exist. |
 | `~/.claude/git-config.previous` | appended by `setup.sh` | If either git setting already had a different value, the old `key=value` is recorded here (and printed in red) so [Uninstall](#uninstall) can restore it. |
-| `~/.claude/statusline-command.sh` | `claude-setup/config/statusline-command.sh` under either root | Overlay step, `chmod +x`, and the **first** one to run. The settings template merged below points `statusLine` at this exact path, so whoever merges that template has to install the script too: leaving it to the optional `install.sh` meant a plain `setup.sh` run ended with a `statusLine` naming a file nothing had put on disk. **A plain `setup.sh` therefore writes it on every run**, `--skip-overlay` included, since the framework ships it. It reads its input with `jq` and renders empty without it (setup prints a note when `jq` is missing); delete the `statusLine` key from `~/.claude/settings.json` to turn it off. |
+| `~/.claude/statusline-command.sh` | `claude-setup/config/statusline-command.sh` under either root | Overlay step, `chmod +x`, and the **first** one to run — but **the framework ships no statusline**, so from the framework root this step always reports `skipped` and nothing is written. It is a slot: a memory repo that carries the script gets it installed, and must also carry the `statusLine` key in its own `claude-setup/config/settings.json` so the two arrive together. See [What the framework deliberately does not ship](#what-the-framework-deliberately-does-not-ship). |
 | `~/.claude/skills/<name>`, `~/.codex/skills/<name>`, `~/.config/opencode/skills/<name>` | `skills/<name>/` under either root | Overlay step. The framework ships no skills; these come from the memory repo. ⚠️ Each `<name>` is **replaced whole** (`rm -rf` then `cp -r`), never merged, in all three destinations; one that differs from the incoming tree — a hand-written skill of the same name included — is backed up beside itself first, and an identical one is left untouched. And when both roots ship the same `<name>`, the framework's copy is not installed at all: the step reports it as `overridden by the personal root` and only the memory repo's tree lands. |
 | `~/AGENTS.md`, `~/CLAUDE.md` | `agents/AGENTS.md`, `agents/CLAUDE.md` under either root | Overlay step; an existing file is backed up first. Neither is shipped by the framework today. `~/.claude/CLAUDE.md` is **not** written from here: it comes from `claude-setup/config/CLAUDE.global.md` (last row), and only falls back to `agents/CLAUDE.md` if no root ships a `CLAUDE.global.md` at all — which, since the framework ships one, does not happen in practice. |
 | `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md`, `~/.codex/rules/` | `config/codex-config.toml`, `codex-hooks.json`, `codex-AGENTS.md`, `codex-rules/` under either root | Overlay step, Codex CLI configuration. **The framework ships none of these**, so from the framework root this step always reports `skipped`; it is a slot for your memory repo to fill if you use Codex. |
-| `~/.config/opencode/opencode.jsonc`, `~/.opencode/plugins/*.js` | `config/opencode-config.jsonc`, `plugins/*.js` under either root | Overlay step, OpenCode configuration. The framework ships no `opencode.jsonc` — that half is a slot for your memory repo — and one plugin, `plugins/graphify.js`. |
+| `~/.config/opencode/opencode.jsonc`, `~/.opencode/plugins/*.js` | `config/opencode-config.jsonc`, `plugins/*.js` under either root | Overlay step, OpenCode configuration. **The framework ships neither half** — no `opencode.jsonc` and no `plugins/` directory at all — so from the framework root this step always reports `skipped`. Both are slots for your memory repo. |
 | `~/.claude/commands/*.md` | `claude-setup/commands/*.md` under either root | Overlay step, slash commands. The framework ships none. |
 | `~/.claude/agents/*.md` | `claude-setup/config/agents/*.md` under either root | Overlay step, subagent files; the framework ships `architect.md` and `verify.md`. ⚠️ **Both pin `model: fable` in their frontmatter — the highest-priced tier.** Nothing in Claude Code switches the main model on a condition, so a subagent file is the mechanism for "escalate this kind of work to a stronger model", and these two exist to be escalated to; but they are installed by a framework a stranger runs sight-unseen, and every invocation of `architect` or `verify` bills at that tier. Change the `model:` line (or delete the two files from `~/.claude/agents/`) if that is not what you want. |
 | `~/.claude/hooks/*` | `claude-setup/config/hooks/*` under either root | Overlay step, `chmod +x`. Copied only: a memory-repo hook is registered solely by the memory repo's `settings.json` template. |
-| `~/.claude/settings.json` (again) | `claude-setup/config/settings.json` under either root, via `merge-settings-template.py` — or `merge-settings-template.mjs` under `node` when there is no `python3` | Overlay step, after the memory-hook registration above. Framework template merged first, memory repo's second; see [The template merger](#the-template-merger). The framework's template contributes `env.DISABLE_AUTOUPDATER=1`, the `statusLine` naming the row above, a `PreToolUse` hint on `Bash` and a `SessionStart` entry for `context-mode-cache-heal.mjs`. Skipped, with a note, only when the machine has neither interpreter. |
+| `~/.claude/settings.json` (again) | `claude-setup/config/settings.json` under either root, via `merge-settings-template.py` — or `merge-settings-template.mjs` under `node` when there is no `python3` | Overlay step, after the memory-hook registration above. Framework template merged first, memory repo's second; see [The template merger](#the-template-merger). The framework's template contributes exactly two hook entries and no other key: a `PreToolUse` hint on `Bash` and a `SessionStart` entry for `context-mode-cache-heal.mjs`. It carries **no `statusLine` and no `env`** — those are preferences, and belong in your own template, which is merged after this one. Skipped, with a note, only when the machine has neither interpreter. |
 | `~/.claude/CLAUDE.md` | `claude-setup/config/CLAUDE.global.md` under either root | Overlay step — but the framework ships this file, so **a plain `setup.sh` writes it on every run, `--skip-overlay` included**. A `~/.claude/CLAUDE.md` of your own is replaced, backed up first as `CLAUDE.md.bak.<timestamp>`; a memory repo that carries its own copy wins over the framework's. Keep anything you want to survive a re-run in the memory repo's copy, not in the installed file. |
 
 `setup.sh` creates the target directories it needs if they do not exist. It installs no
@@ -126,15 +130,45 @@ packages. With `--skip-overlay`, or when neither root carries a tree, the overla
 the top level, so a bare framework install leaves `~/.claude/skills/` and `~/.claude/commands/`
 untouched.
 
+### What the framework deliberately does not ship
+
+Three things used to be installed from this root and are not any more, and the reason is the same
+one in all three cases: **they are preferences, not the memory layer.** A framework a stranger
+clones and runs should not decide what their prompt looks like, how another tool updates itself,
+or which third-party CLIs they are told to reach for. All three now live in a personal repo and
+arrive through [the overlay](#the-overlay-your-own-skills-commands-and-hooks), where carrying the
+file is the opt-in and nobody inherits anyone else's taste.
+
+- **The statusline.** `claude-setup/config/statusline.sh`, `statusline-command.sh` and
+  `statusline-command.js` are gone from this repo. `step_statusline` still exists and still runs
+  first, but from the framework root it always reports `skipped`. A memory repo that carries
+  `claude-setup/config/statusline-command.sh` gets it installed exactly as before.
+- **`env.DISABLE_AUTOUPDATER`.** The shipped `settings.json` template no longer sets it. Whether
+  Claude Code updates itself is a decision about someone else's machine.
+- **Guidance about third-party tools.** `CLAUDE.global.md` is now 27 lines — memory tiers, how to
+  write a memory, session continuity — and nothing else. Its "Optional tools" sections about
+  `context-mode` and `graphify` were removed: a memory layer has no business teaching an
+  assistant about tools it does not install. The `plugins/` directory (and the OpenCode plugin
+  in it) went the same way.
+
+⚠️ **The `statusLine` key and the statusline script must ship from the same root.** This is not a
+style rule; it is the most-reported bug in this repo's history. The framework's settings template
+used to set `statusLine` to a script that another step — the *optional* `install.sh` — was
+expected to install, so a plain `setup.sh` run ended with every single session executing a
+command that did not exist. Whoever ships the key ships the file. That is why the framework, now
+that it ships no statusline script, ships no `statusLine` key either, and why a memory repo that
+wants one must put both in its own root. The Windows merger encodes the same rule in its
+signature: see [Windows](#windows).
+
 ### Registering the hooks by hand
 
 Without `python3`, `setup.sh` prints the three commands and registers nothing:
 `merge-ai-memory-hook.py` has no Node port, so this one step has no fallback. It does **not**
 follow that `settings.json` is left alone. The settings *template* merge later in the same run
 does fall back to `node claude-setup/config/merge-settings-template.mjs`, so on a node-only
-machine the file is still created and still gains `statusLine`, `env.DISABLE_AUTOUPDATER` and the
-template's own hooks — what is missing is precisely the three memory hooks below, which is why
-the machine looks configured and remembers nothing.
+machine the file is still created and still gains the template's own hook entries — what is
+missing is precisely the three memory hooks below, which is why the machine looks configured and
+remembers nothing.
 
 If `python3` is present but the merge script fails (an unparsable `settings.json` is the usual
 cause), setup prints `! could not auto-register the hooks; <settings> may be incomplete`, prints
@@ -177,8 +211,8 @@ hooks, not this one, so a broken notice hook is only visible as an absent notice
 
 `claude-setup/install.sh` is unrelated to the memory layer and optional. It walks the same two
 roots as `setup.sh` (framework, then memory repo; `--skip-overlay` applies here too) and repeats
-the same non-memory steps — **all** of them, the statusline included, since `setup.sh` grew its
-own statusline step. On a machine where `setup.sh` has already run it therefore changes nothing:
+the same non-memory steps — **all ten** of them, the statusline slot included. On a machine where
+`setup.sh` has already run it therefore changes nothing:
 every step finds an identical file and leaves it alone. Note what that looks like on screen — it
 is not silence. Each step still prints its ordinary `<step>: from <root>` line, because that line
 reports which root supplied the files, not whether they were rewritten; the only step that says
@@ -188,17 +222,19 @@ look almost identical, and the way to tell them apart is that the second leaves 
 `*.bak.<timestamp>` files behind. It exists for re-applying the extras alone. What it changes:
 
 - **`~/.claude/CLAUDE.md` is replaced** by the root's `claude-setup/config/CLAUDE.global.md` —
-  the shipped one carries the context-mode routing rules and the memory-tier rules.
-  The file you had is kept as `CLAUDE.md.bak.<timestamp>`
+  the shipped one is 27 lines and carries only the memory rules: which of the three tiers a fact
+  belongs in, how to write one (edit the tree, do not commit — the hooks do that), and session
+  continuity. The file you had is kept as `CLAUDE.md.bak.<timestamp>`
   (no backup when it was already identical). If the memory repo carries its own
   `CLAUDE.global.md`, that is the one that ends up in place. `setup.sh` performs this same step;
   `install.sh` only re-applies it.
 - **`~/.claude/settings.json` is merged with the root's `claude-setup/config/settings.json`**
-  through the [template merger](#the-template-merger). The shipped template contributes
-  `env.DISABLE_AUTOUPDATER=1`, a `statusLine` running `~/.claude/statusline-command.sh`, a
-  `PreToolUse` hook on `Bash` that points grep-style searches at `graphify-out/GRAPH_REPORT.md`
-  when a graph exists, and a `SessionStart` entry for `context-mode-cache-heal.mjs`. Each lands
-  only where you have nothing equivalent; `permissions` is never touched; a
+  through the [template merger](#the-template-merger). The shipped template contributes two hook
+  entries and nothing else: a `PreToolUse` hook on `Bash` that points grep-style searches at
+  `graphify-out/GRAPH_REPORT.md` when a graph exists, and a `SessionStart` entry for
+  `context-mode-cache-heal.mjs`. Each lands only where you have nothing equivalent; there is no
+  `statusLine` and no `env` key in it (see [What the framework deliberately does not
+  ship](#what-the-framework-deliberately-does-not-ship)); `permissions` is never touched; a
   `settings.json.bak.<timestamp>` is kept when the merge changed something. Needs `python3`
   **or** `node` — the `.py` and `.mjs` mergers are two ports of one tool, so the step is skipped
   with a note only when neither interpreter is present. `setup.sh` merges the same template, so on
@@ -207,13 +243,15 @@ look almost identical, and the way to tell them apart is that the second leaves 
   `setup.sh` uses (they are eight of the ten steps `install.sh` runs in a root; the settings merge
   and `CLAUDE.global.md`, the two bullets above, are the other two). `setup.sh` runs an eleventh
   step, `git-hooks`, that `install.sh` deliberately does not — see below.
-  `claude-setup/config/statusline-command.sh` → `~/.claude/` (needs `jq`);
+  `claude-setup/config/statusline-command.sh` → `~/.claude/` — **a slot the framework leaves
+  empty**, so this one reports `skipped` unless your memory repo fills it;
   `skills/<name>/` → `~/.claude/skills/<name>`, `~/.codex/skills/<name>` **and**
   `~/.config/opencode/skills/<name>`; `agents/AGENTS.md` → `~/AGENTS.md` and `agents/CLAUDE.md` →
   `~/CLAUDE.md`; the Codex tree — `config/codex-config.toml`, `config/codex-hooks.json`,
   `config/codex-AGENTS.md` and `config/codex-rules/*` → `~/.codex/config.toml`, `hooks.json`,
   `AGENTS.md` and `rules/`; the OpenCode tree — `config/opencode-config.jsonc` →
-  `~/.config/opencode/opencode.jsonc` and `plugins/*.js` → `~/.opencode/plugins/`;
+  `~/.config/opencode/opencode.jsonc` and `plugins/*.js` → `~/.opencode/plugins/` (the framework
+  ships neither, so this one is a slot too);
   `claude-setup/commands/*.md` → `~/.claude/commands/`; `claude-setup/config/agents/*.md` →
   `~/.claude/agents/`; and every file of `claude-setup/config/hooks/` → `~/.claude/hooks/`,
   executable, `context-mode-cache-heal.mjs` among them. Each file that would be overwritten and
@@ -227,10 +265,9 @@ Registration comes from `setup.sh` alone. Running `install.sh` on its own theref
 memory hooks sitting on disk and inert, which is exactly the "installed and dead" state
 `memory-doctor`'s wiring check exists to flag; run `setup.sh` for the memory layer. Both
 installers write the same files from the same sources, so they can run in either order. Its
-closing message asks you to check for `jq` and `node` and offers some Claude Code plugins: the
-`jq` line is real (the statusline both installers now put in place reads its input with it), and
-the plugins are genuinely optional — nothing in this runbook needs them, and the shipped
-`CLAUDE.md` rules that mention `context-mode` are written to be ignored when it is absent.
+closing message asks you to check for `jq` and `node` and offers some Claude Code plugins. Read
+both as optional: `jq` matters only if **your** root ships the shell statusline, since the
+framework ships none, and nothing in this runbook needs the plugins.
 
 ### The template merger
 
@@ -246,9 +283,10 @@ node    claude-setup/config/merge-settings-template.mjs ~/.claude/settings.json 
 Rules, applied idempotently: for each event under the template's `hooks`, append each entry
 whose command's script basename is not already registered under that event (the same identity
 rule `merge-ai-memory-hook.py` uses, so a `~`-relative and an absolute path to one script count
-as one hook); copy `statusLine` and `env` keys only where the target has none; **never touch
-`permissions`**; create `settings.json` when it does not exist; exit 0 and print one line per
-change, or `no change`. Commands in a template may use `~` and are written as they are — Claude
+as one hook); copy `statusLine` and `env` keys only where the target has none — a capability the
+framework's own template never uses, since it carries neither; **never touch `permissions`**;
+create `settings.json` when it does not exist; exit 0 and print one line per change, or
+`no change`. Commands in a template may use `~` and are written as they are — Claude
 Code expands them. `setup.sh` and `install.sh` call it once per root that carries a template,
 with `python3` where that exists and `node` otherwise — which is why a node-only machine gets the
 same merge rather than none. `setup.ps1` always uses `node`.
