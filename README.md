@@ -61,8 +61,9 @@ WSL; `setup.ps1` covers native Windows and is described under
 
 ⚠️ **Honest status.** Linux and WSL are verified by running the installer end to end. macOS is
 reviewed and its divergences are handled, but **it has not been run on a Mac yet**. `setup.ps1`
-parses cleanly under Windows PowerShell 5.1 and every parameter binds, but **it has not been run
-end to end on Windows yet** either. Treat those two as expected-to-work rather than proven, and if
+parses cleanly and every parameter binds **under PowerShell 7** — ⚠️ **it does not parse under
+Windows PowerShell 5.1**, so `pwsh` is required, not the `powershell` that ships with Windows —
+and **it has not been run end to end on Windows yet** either. Treat those two as expected-to-work rather than proven, and if
 you are the first to try one, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
 
 ## Quick start
@@ -103,7 +104,8 @@ Clone this repository as it is; fork it first only if you intend to change the f
 `setup.sh` records the checkout's location in `~/.claude/sunstone-path` and the SessionStart
 notice hook runs `memory-doctor` from there.
 
-Windows: `powershell -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo <url-or-path>`, and see
+Windows: `pwsh -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo <url-or-path>` — **`pwsh`, not
+the `powershell` that ships with Windows**, which cannot parse the script — and see
 [Windows](claude-setup/SETUP.md#windows) for what differs.
 
 ## What gets installed

@@ -62,9 +62,18 @@ below; the short version is that macOS ships neither `python3` nor `timeout` and
 fallback, and Windows ships no `python3` so the session hooks install as Node ports.
 
 ⚠️ **Verified where, honestly:** Linux and WSL are exercised end to end. macOS is reviewed and its
-GNU/BSD divergences are handled, but has not been run on a Mac. `setup.ps1` parses cleanly under
-Windows PowerShell 5.1 with every parameter binding, but has not been run end to end on Windows.
+GNU/BSD divergences are handled, but has not been run on a Mac. `setup.ps1` parses cleanly with
+every parameter binding **under PowerShell 7**, but has not been run end to end on Windows.
 [Verify](#verify) is what to check if you are first.
+
+⛔ **`setup.ps1` does not parse under Windows PowerShell 5.1** — the `powershell` that ships with
+Windows. It needs `pwsh` (PowerShell 7), which is a separate install. This is recorded first-hand
+on Joy's Windows machine and is the first thing to hit anyone who runs the documented
+`powershell -ExecutionPolicy Bypass -File setup.ps1` line, so use `pwsh` in its place. What
+partially *has* run there: `setup.sh`'s hook-install path (`C:/Users/Joy/.git-hooks/` exists with
+`core.hooksPath` set) and the memory-hook install on 2026-09-07 (`ai-memory-sync.js`,
+`ai-memory-commit.js`, `~/.claude/ai-memory-path`). So the Windows story is "partly installed by
+hand", not "installer verified".
 
 ## Prerequisites
 
@@ -645,8 +654,11 @@ not want to re-run the whole script, copy the changed file into place by hand an
 ## Windows
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo git@github.com:alice/my-memory.git
+pwsh -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo git@github.com:alice/my-memory.git
 ```
+
+⛔ **`pwsh`, not `powershell`.** PowerShell 7 is a separate install from the Windows Powershell 5.1
+that ships with the OS, and `setup.ps1` does not parse under 5.1.
 
 `SUNSTONE_MEMORY_REPO` is honoured as well. Differences from the shell version — and, third
 bullet, one thing that is deliberately *not* one, because this file used to claim it was:
