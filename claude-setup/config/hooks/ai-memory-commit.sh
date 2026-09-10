@@ -3,10 +3,18 @@
 #
 # Commits anything written under the memory tree (MEMORY_DIR, default
 # claude-setup/memory/) during the session.
-# It does NOT push: no network call happens here, so ending a session is never
-# slower for it. The commit goes out on the next SessionStart, where
-# ai-memory-sync.sh already talks to the remote — one round trip, in a session
-# the user started, so a rebase conflict surfaces while they are present.
+# It then attempts a DETACHED, time-bounded push, and never waits for it. The
+# session ends at the same speed whether the network is there or not.
+#
+# ⚠️ Why push here at all, when ai-memory-sync.sh pushes on the next
+# SessionStart: because "the next SessionStart" means the next one ON THIS
+# MACHINE. Close the laptop after your last session and open a different
+# machine, and that memory is committed locally and reachable from nowhere —
+# which is the exact case this whole layer exists to prevent. The next
+# SessionStart remains the reliable path: it pulls first, resolves divergence,
+# and surfaces a conflict while the user is present. This is the opportunistic
+# one — fire-and-forget, --no-verify-free, and silent about failure, because
+# anything it misses the next session still fixes.
 #
 # Scope is deliberately narrow: this stages ONE directory by path and nothing
 # else. An auto-commit is fine for a memory store and unacceptable for source,
@@ -121,6 +129,48 @@ if ! git -C "$REPO" commit --quiet --no-verify \
      -m "memory: ${COUNT} file(s) from a session — ${FILES}" \
      -- "$MEM_DIR" >/dev/null 2>&1; then
   git -C "$REPO" reset --quiet -- "$MEM_DIR" >/dev/null 2>&1 || true
+  exit 0
 fi
+
+# ── Opportunistic push ────────────────────────────────────────────────────
+#
+# Detached on purpose: `setsid` where it exists, a plain background subshell
+# otherwise. The hook returns immediately either way, so a hung or absent
+# network cannot make ending a session feel slow — the failure mode that made
+# this hook refuse to touch the network in the first place.
+#
+# Bounded twice over: GIT_TERMINAL_PROMPT=0 so a credential prompt cannot wait
+# on a stdin nobody is watching, and a hard kill after PUSH_TIMEOUT. `timeout`
+# is not on stock macOS, so gtimeout and then a self-watchdog stand in for it —
+# the same ladder ai-memory-sync.sh climbs.
+#
+# --no-verify is deliberate: the framework's own pre-push guard is interactive
+# by design, and a guard asking a question with nobody there is a hang. The
+# guard still covers every push a human makes.
+#
+# ⛔ Only the current branch, never --force, never a new remote. If the push is
+# rejected — diverged, no upstream, no remote at all — that is the normal case
+# and the next SessionStart handles it properly, with a pull first.
+PUSH_TIMEOUT="${SUPER_AI_PUSH_TIMEOUT:-20}"
+
+git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || exit 0
+
+push_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 timeout "$PUSH_TIMEOUT" git -C "$REPO" push --quiet --no-verify >/dev/null 2>&1
+  elif command -v gtimeout >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 gtimeout "$PUSH_TIMEOUT" git -C "$REPO" push --quiet --no-verify >/dev/null 2>&1
+  else
+    GIT_TERMINAL_PROMPT=0 git -C "$REPO" push --quiet --no-verify >/dev/null 2>&1 &
+    local pid=$!
+    ( sleep "$PUSH_TIMEOUT"; kill -TERM "$pid"; sleep 2; kill -KILL "$pid" ) >/dev/null 2>&1 &
+    wait "$pid" >/dev/null 2>&1
+  fi
+}
+
+# `trap '' HUP` rather than setsid or nohup: the subshell has to outlive this
+# hook, and ignoring SIGHUP is all that takes — no second interpreter to hand
+# the function to, and nothing that behaves differently across platforms.
+( trap '' HUP; push_bounded ) >/dev/null 2>&1 &
 
 exit 0

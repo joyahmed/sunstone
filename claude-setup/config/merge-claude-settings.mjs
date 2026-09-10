@@ -1,14 +1,21 @@
 #!/usr/bin/env node
-// merge-claude-settings.mjs — idempotently merge the Windows statusline + memory
-// hook into ~/.claude/settings.json without clobbering existing keys.
-// Usage: node merge-claude-settings.mjs <settingsPath> <statuslineJs> <hookJs> [commitJs]
+// merge-claude-settings.mjs — idempotently merge the Windows memory hooks into
+// ~/.claude/settings.json without clobbering existing keys.
+// Usage: node merge-claude-settings.mjs <settingsPath> <hookJs> [commitJs] [statuslineJs]
 // Windows counterpart of the Linux merge-ai-memory-hook.py.
+//
+// ⚠️ statuslineJs is OPTIONAL and comes LAST. The framework ships no statusline
+// — a statusline is a preference, not part of the memory layer — so this
+// registers one only when a root actually supplied a script. It used to be a
+// required argument, which meant a checkout with no statusline registered NO
+// MEMORY HOOKS AT ALL: the feature and the preference were wired together, and
+// dropping the preference silently took the feature with it.
 
 import fs from "node:fs";
 
-const [settingsPath, statuslineJs, hookJs, commitJs] = process.argv.slice(2);
-if (!settingsPath || !statuslineJs || !hookJs) {
-  console.error("usage: merge-claude-settings.mjs <settingsPath> <statuslineJs> <hookJs> [commitJs]");
+const [settingsPath, hookJs, commitJs, statuslineJs] = process.argv.slice(2);
+if (!settingsPath || !hookJs) {
+  console.error("usage: merge-claude-settings.mjs <settingsPath> <hookJs> [commitJs] [statuslineJs]");
   process.exit(2);
 }
 
@@ -16,9 +23,9 @@ if (!settingsPath || !statuslineJs || !hookJs) {
 // path is always double-quoted so a user profile with a space in it works.
 const fwd = (p) => p.replace(/\\/g, "/");
 const cmd = (p) => `node "${fwd(p)}"`;
-const statuslineCmd = cmd(statuslineJs);
 const hookCmd = cmd(hookJs);
 const commitCmd = commitJs ? cmd(commitJs) : null;
+const statuslineCmd = statuslineJs ? cmd(statuslineJs) : null;
 
 let settings = {};
 if (fs.existsSync(settingsPath)) {
@@ -30,8 +37,10 @@ if (fs.existsSync(settingsPath)) {
   }
 }
 
-// statusLine — set/replace ours
-settings.statusLine = { type: "command", command: statuslineCmd };
+// statusLine — only when a root shipped a script to point it at. Setting the
+// key with no script behind it is the exact bug this framework shipped for a
+// while: every session running a statusline command that does not exist.
+if (statuslineCmd) settings.statusLine = { type: "command", command: statuslineCmd };
 
 // Append a hook command under an event only if no entry there already runs the
 // same command or the same script. "Same script" is judged by basename, so
@@ -71,9 +80,9 @@ register("SessionStart", hookCmd);
 if (commitCmd) register("SessionEnd", commitCmd, { async: true });
 
 // Any other hook entries already in settings (Notification, Stop, ...) are left
-// untouched: only the two memory hooks and the statusLine are managed here.
+// untouched: only the two memory hooks, and the statusLine when one was given.
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log(
-  `merged statusLine + SessionStart${commitCmd ? " + SessionEnd" : ""} memory hooks into ${settingsPath}`
+  `merged SessionStart${commitCmd ? " + SessionEnd" : ""} memory hooks${statuslineCmd ? " + statusLine" : ""} into ${settingsPath}`
 );

@@ -44,6 +44,21 @@ it was; the message says `nothing has been installed`, and there is nothing to r
 
 ---
 
+## Platforms
+
+`setup.sh` is for Linux, macOS and WSL; `setup.ps1` is for native Windows ([Windows](#windows)).
+A WSL checkout is a Linux checkout and needs nothing special — run `setup.sh` inside WSL, and
+`setup.ps1` on the Windows side only if you also run Claude Code natively there.
+
+What each platform is missing by default is covered row by row in [Prerequisites](#prerequisites)
+below; the short version is that macOS ships no `python3`, `jq` or `timeout` and every one of
+those has a fallback, and Windows ships no `python3` so the session hooks install as Node ports.
+
+⚠️ **Verified where, honestly:** Linux and WSL are exercised end to end. macOS is reviewed and its
+GNU/BSD divergences are handled, but has not been run on a Mac. `setup.ps1` parses cleanly under
+Windows PowerShell 5.1 with every parameter binding, but has not been run end to end on Windows.
+[Verify](#verify) is what to check if you are first.
+
 ## Prerequisites
 
 | Tool | Needed for | Notes |
@@ -97,8 +112,8 @@ clutter — the same rule the per-file copy helper applies.
 | `~/.claude/statusline-command.sh` | `claude-setup/config/statusline-command.sh` under either root | Overlay step, `chmod +x`, and the **first** one to run. The settings template merged below points `statusLine` at this exact path, so whoever merges that template has to install the script too: leaving it to the optional `install.sh` meant a plain `setup.sh` run ended with a `statusLine` naming a file nothing had put on disk. **A plain `setup.sh` therefore writes it on every run**, `--skip-overlay` included, since the framework ships it. It reads its input with `jq` and renders empty without it (setup prints a note when `jq` is missing); delete the `statusLine` key from `~/.claude/settings.json` to turn it off. |
 | `~/.claude/skills/<name>`, `~/.codex/skills/<name>`, `~/.config/opencode/skills/<name>` | `skills/<name>/` under either root | Overlay step. The framework ships no skills; these come from the memory repo. ⚠️ Each `<name>` is **replaced whole** (`rm -rf` then `cp -r`), never merged, in all three destinations; one that differs from the incoming tree — a hand-written skill of the same name included — is backed up beside itself first, and an identical one is left untouched. And when both roots ship the same `<name>`, the framework's copy is not installed at all: the step reports it as `overridden by the personal root` and only the memory repo's tree lands. |
 | `~/AGENTS.md`, `~/CLAUDE.md` | `agents/AGENTS.md`, `agents/CLAUDE.md` under either root | Overlay step; an existing file is backed up first. Neither is shipped by the framework today. `~/.claude/CLAUDE.md` is **not** written from here: it comes from `claude-setup/config/CLAUDE.global.md` (last row), and only falls back to `agents/CLAUDE.md` if no root ships a `CLAUDE.global.md` at all — which, since the framework ships one, does not happen in practice. |
-| `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md`, `~/.codex/rules/` | `config/codex-config.toml`, `codex-hooks.json`, `codex-AGENTS.md`, `codex-rules/` under either root | Overlay step, Codex CLI configuration. |
-| `~/.config/opencode/opencode.jsonc`, `~/.opencode/plugins/*.js` | `config/opencode-config.jsonc`, `plugins/*.js` under either root | Overlay step, OpenCode configuration; the framework ships `plugins/graphify.js`. |
+| `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md`, `~/.codex/rules/` | `config/codex-config.toml`, `codex-hooks.json`, `codex-AGENTS.md`, `codex-rules/` under either root | Overlay step, Codex CLI configuration. **The framework ships none of these**, so from the framework root this step always reports `skipped`; it is a slot for your memory repo to fill if you use Codex. |
+| `~/.config/opencode/opencode.jsonc`, `~/.opencode/plugins/*.js` | `config/opencode-config.jsonc`, `plugins/*.js` under either root | Overlay step, OpenCode configuration. The framework ships no `opencode.jsonc` — that half is a slot for your memory repo — and one plugin, `plugins/graphify.js`. |
 | `~/.claude/commands/*.md` | `claude-setup/commands/*.md` under either root | Overlay step, slash commands. The framework ships none. |
 | `~/.claude/agents/*.md` | `claude-setup/config/agents/*.md` under either root | Overlay step, subagent files; the framework ships `architect.md` and `verify.md`. ⚠️ **Both pin `model: fable` in their frontmatter — the highest-priced tier.** Nothing in Claude Code switches the main model on a condition, so a subagent file is the mechanism for "escalate this kind of work to a stronger model", and these two exist to be escalated to; but they are installed by a framework a stranger runs sight-unseen, and every invocation of `architect` or `verify` bills at that tier. Change the `model:` line (or delete the two files from `~/.claude/agents/`) if that is not what you want. |
 | `~/.claude/hooks/*` | `claude-setup/config/hooks/*` under either root | Overlay step, `chmod +x`. Copied only: a memory-repo hook is registered solely by the memory repo's `settings.json` template. |
@@ -188,9 +203,10 @@ look almost identical, and the way to tell them apart is that the second leaves 
   **or** `node` — the `.py` and `.mjs` mergers are two ports of one tool, so the step is skipped
   with a note only when neither interpreter is present. `setup.sh` merges the same template, so on
   a machine it has already run this step reports `no change`.
-- **Copies** — the nine file-copying steps, run per root in this order, from the same sources
-  `setup.sh` uses (they are nine of the eleven steps in a root; the settings merge and
-  `CLAUDE.global.md`, the two bullets above, are the other two).
+- **Copies** — the eight file-copying steps, run per root in this order, from the same sources
+  `setup.sh` uses (they are eight of the ten steps `install.sh` runs in a root; the settings merge
+  and `CLAUDE.global.md`, the two bullets above, are the other two). `setup.sh` runs an eleventh
+  step, `git-hooks`, that `install.sh` deliberately does not — see below.
   `claude-setup/config/statusline-command.sh` → `~/.claude/` (needs `jq`);
   `skills/<name>/` → `~/.claude/skills/<name>`, `~/.codex/skills/<name>` **and**
   `~/.config/opencode/skills/<name>`; `agents/AGENTS.md` → `~/AGENTS.md` and `agents/CLAUDE.md` →

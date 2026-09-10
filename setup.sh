@@ -652,13 +652,18 @@ step_claude_global() {
   step_end CLAUDE.global.md "$root" "$n" "→ ~/.claude/CLAUDE.md"
 }
 
-# claude-setup/config/statusline-command.sh → ~/.claude/. The settings.json
-# template merged below points its statusLine key at that script, so it has to
-# be installed by whoever merges that template:
-# leaving it to the optional claude-setup/install.sh meant a plain setup.sh run
-# ended with a statusLine command that did not exist. setup.ps1 does the same
-# thing with the Node port. The script itself wants `jq` at runtime — nothing
-# else in setup.sh does, hence the note when it is missing.
+# claude-setup/config/statusline-command.sh → ~/.claude/.
+#
+# ⚠️ The framework ships NO statusline. A statusline is a preference, not part
+# of a memory layer, so this is an overlay slot: a personal root that carries
+# claude-setup/config/statusline-command.sh gets it installed, and a root that
+# does not simply reports `skipped`. The settings template no longer names a
+# statusLine key either — the two must travel together or you get the bug this
+# framework shipped for a while, where every session ran a statusline command
+# that did not exist. A personal root that wants one ships both: the script
+# here, and the statusLine key in its own settings.json, merged after this one.
+#
+# The shell script wants `jq` at runtime; hence the note when it is missing.
 step_statusline() {
   local root="$1" f got="" n=0
   for f in statusline-command.sh; do

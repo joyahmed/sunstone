@@ -356,26 +356,30 @@ if ((Test-Path -LiteralPath $hkSrc) -and (Test-Command node)) {
         $doctorCmd = "bash `"$(ConvertTo-Fwd "$ClaudeHooks\memory-doctor-notice.sh")`""
         Write-Host "  installed hooks\memory-doctor-notice.sh (runs under Git for Windows' bash)"
     }
-    # The statusline is an optional extra shipped beside the hooks; the merge
-    # script registers it together with the two hooks.
-    if (Test-Path -LiteralPath $slSrc) {
+    # A statusline is a PREFERENCE, not part of the memory layer, so the
+    # framework ships none. A root that carries claude-setup\config\
+    # statusline-command.js gets it installed and registered; one that does not
+    # simply has no statusLine key written, and the memory hooks register
+    # exactly the same either way.
+    $slPresent = Test-Path -LiteralPath $slSrc
+    if ($slPresent) {
         Install-File $slSrc $slDst
         Write-Host "  installed statusline-command.js"
     }
 
-    # Register SessionStart/SessionEnd memory hooks (+ statusLine) in
-    # settings.json — idempotent, existing entries are kept. Backed up first;
-    # the backup is dropped again if the merge turned out to be a no-op.
+    # Register SessionStart/SessionEnd memory hooks in settings.json —
+    # idempotent, existing entries are kept. Backed up first; the backup is
+    # dropped again if the merge turned out to be a no-op.
+    #
+    # ⚠️ The statusline path is the LAST argument and is optional. It used to be
+    # required and second, which meant a checkout without a statusline
+    # registered no memory hooks at all — the preference and the feature were
+    # wired together.
     $settingsBak = New-SettingsSnapshot
     $memoryHooksOk = $true
-    if (Test-Path -LiteralPath $slSrc) {
-        if ((Invoke-NodeScript @($mrgSrc, $settingsPath, $slDst, $hkDst, $ciDst)) -ne 0) { $memoryHooksOk = $false }
-    } else {
-        # merge-claude-settings.mjs registers the statusline together with the
-        # hooks and needs all three paths; without it, register by hand.
-        Write-Host "  ! statusline-command.js not shipped; the memory hooks were not registered" -ForegroundColor Yellow
-        $memoryHooksOk = $false
-    }
+    $mrgArgs = @($mrgSrc, $settingsPath, $hkDst, $ciDst)
+    if ($slPresent) { $mrgArgs += $slDst }
+    if ((Invoke-NodeScript $mrgArgs) -ne 0) { $memoryHooksOk = $false }
     # The doctor notice goes through the template merger: a one-entry template
     # written to a temp file, so the same identity rule (script basename per
     # event) applies and a re-run adds nothing.

@@ -31,6 +31,24 @@ spaces, so a path containing a space works.
 
 Throughout these docs the example memory repo is called `my-memory` and its owner is `alice`.
 
+## Platforms
+
+One installer per platform, both installing the same layer. `setup.sh` covers Linux, macOS and
+WSL; `setup.ps1` covers native Windows and is described under [Windows](#windows).
+
+| | Installer | What that platform lacks by default, and what happens |
+|---|---|---|
+| **Linux** | `setup.sh` | Nothing in particular. This is the most-exercised path. |
+| **WSL** | `setup.sh` | Treated as Linux, and it is one — a WSL checkout is a Linux checkout. Only the Windows side of the same machine needs `setup.ps1`, and only if you also run Claude Code natively there. |
+| **macOS** | `setup.sh` | No `python3` (it arrives with the Xcode command line tools), so the settings template is merged by `node` instead; no `jq`, so the statusline renders empty and setup says so; no `timeout`, so the SessionStart hook bounds git itself rather than running unbounded. `/bin/bash` is 3.2 — nothing here uses a bash 4 feature. BSD `date`, `readlink` and `sort` differ from GNU and each use falls back. |
+| **Windows** | `setup.ps1` | No `python3`, so the three session hooks install as their Node ports (`node` is required for them; the rest of the install proceeds without it). The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell — nothing extra to install. |
+
+⚠️ **Honest status.** Linux and WSL are verified by running the installer end to end. macOS is
+reviewed and its divergences are handled, but **it has not been run on a Mac yet**. `setup.ps1`
+parses cleanly under Windows PowerShell 5.1 and every parameter binds, but **it has not been run
+end to end on Windows yet** either. Treat those two as expected-to-work rather than proven, and if
+you are the first to try one, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
+
 ## Quick start
 
 ```bash
@@ -446,12 +464,18 @@ file that is not there. The merger itself ships as two ports of one tool, so `py
 `settings.json` still needs `python3`, and without it setup prints the three lines to add by hand.
 
 `claude-setup/install.sh` is separate and optional, and it exists to re-apply the extras alone. It
-walks the same two roots and runs exactly the same ten non-memory steps in the same order — the
+walks the same two roots and runs the same ten non-memory steps in the same order — the
 statusline, `skills/`, `agents/{AGENTS,CLAUDE}.md`, the Codex tree, the OpenCode tree and its
 `plugins/*.js`, `claude-setup/commands/*.md`, the subagent files in `claude-setup/config/agents/`,
 the whole `claude-setup/config/hooks/` directory, the same template merge and the same
 `CLAUDE.global.md` — so on a machine `setup.sh` has already run
-it changes nothing. Expect its output to look like a full install anyway: each step still prints
+it changes nothing.
+
+The one step it does **not** run is `git-hooks`. `setup.sh` has eleven steps per root; this has
+ten. Installing hook files without also setting `core.hooksPath` would put them on disk where
+nothing runs them, and pointing global git config at a directory is a change to your machine
+rather than an extra — which is the line this script does not cross. Run `setup.sh` for the
+guards. Expect its output to look like a full install anyway: each step still prints
 `<step>: from <root>`, because that line names the root the files came from rather than claiming
 they were rewritten, and only the settings merge prints `no change` in so many words.
 

@@ -25,24 +25,3 @@ When the user says "remember X" (or you learn a durable fact about them): edit t
 ## Session continuity
 
 Skills, roles, and decisions persist for the entire session. Do not abandon them as the conversation grows. On resume, check what the previous session left (the memory files above, any session-history tool you have) before asking the user what you were working on.
-
-# Optional tools
-
-None of the following is installed by this framework. Apply a section only if the tool is actually present on this machine; otherwise ignore it.
-
-## If you use context-mode (MCP)
-
-The plugin routes bulky output through a sandbox so it does not flood the context window. When its tools (`ctx_*`) are available:
-
-- Analyze/count/filter/compare/search/parse/transform data by **writing code** via `ctx_execute(language, code)` and printing only the answer. Do not read raw data into context. One script replaces ten tool calls.
-- The plugin intercepts `curl`, `wget`, `WebFetch` and inline HTTP calls in code; use `ctx_fetch_and_index(url, source)` then `ctx_search(queries)` instead, and do not retry the blocked form.
-- Bash output over ~20 lines, `Read` for analysis rather than editing, and broad `grep` go through `ctx_batch_execute`, `ctx_execute_file(path, language, code)` and `ctx_execute(language: "shell", ...)` respectively.
-- Gather with `ctx_batch_execute(commands, queries)` (one call replaces many), follow up with `ctx_search(queries: [...])` as an array, index long-lived material with `ctx_index(content, source)` under a descriptive source label.
-- For multi-URL fetches or multi-API calls pass `concurrency: N` (1-8): 4-8 for I/O-bound work, 1 for CPU-bound work or commands sharing state; cap `gh` calls at 4.
-- Session history is searchable: `ctx_search(queries: ["summary"], source: "compaction", sort: "timeline")` for what you were working on, `source: "decision"`, `"rejected-approach"`, `"constraint"` for the rest. Search before asking; zero results means a fresh session.
-- `ctx stats` / `ctx doctor` / `ctx upgrade` / `ctx purge` map to the MCP tools of the same name (`ctx purge` with `confirm: true`, and warn first — it wipes the knowledge base). The knowledge base survives `/clear` and `/compact`.
-
-## If you use graphify
-
-If a repo has `graphify-out/GRAPH_REPORT.md`, read it before searching raw files for architecture questions; after modifying code run `graphify update .` (AST-only, no API cost). If the graphify skill is installed and the user types `/graphify`, invoke it before doing anything else.
-

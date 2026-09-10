@@ -28,7 +28,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 
 // Optional <repo>/claude-setup/config/super-ai.conf: POSIX KEY=VALUE lines.
 // Rules, identical to conf_get in the .sh twin: '#' starts a comment only at
@@ -205,7 +205,59 @@ function main() {
     ]);
   } catch {
     try { git(repo, ["reset", "--quiet", "--", MEM_DIR]); } catch { /* nothing left to try */ }
+    return;
   }
+
+  // ── Opportunistic push ──────────────────────────────────────────────────
+  //
+  // ⚠️ Why push here when ai-memory-sync pushes on the next SessionStart:
+  // because "the next SessionStart" means the next one ON THIS MACHINE. End
+  // your last session on one machine and open another, and that memory is
+  // committed locally and reachable from nowhere — the exact case this layer
+  // exists to prevent. The next SessionStart is still the reliable path: it
+  // pulls first, resolves divergence and surfaces a conflict while the user is
+  // there. This is the opportunistic one, and it stays silent about failure
+  // because anything it misses the next session repairs.
+  //
+  // detached + unref'd so ending a session is never slower for it, whether the
+  // network is slow, dead or absent — the failure mode that kept this hook off
+  // the network to begin with. Matches ai-memory-commit.sh.
+  //
+  // ⛔ Current branch only, never --force, never a new remote. A rejected push
+  // (diverged, no upstream, no remote) is the normal case, and SessionStart
+  // handles it properly with a pull first.
+  try {
+    git(repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  } catch {
+    return;   // no upstream to push to; nothing to do here
+  }
+
+  // ⛔ Do NOT pass spawn's `timeout` option here. It arms a timer that keeps
+  // this process's event loop alive, so node sits waiting for the full timeout
+  // even with the child detached and unref'd — measured at 5s against a dead
+  // remote, which is precisely the delay at session end this is meant to
+  // avoid. The bound comes from git instead: the low-speed settings below end
+  // a stalled HTTP transfer, GIT_TERMINAL_PROMPT=0 stops a credential prompt
+  // waiting on a stdin nobody is watching, and SSH is bounded by its own
+  // ConnectTimeout. Anything that still escapes is an orphan that harms
+  // nothing and the next SessionStart repairs.
+  const secs = String(Number(process.env.SUPER_AI_PUSH_TIMEOUT) || 20);
+  try {
+    const child = spawn("git", [
+      "-C", repo,
+      "-c", "http.lowSpeedLimit=1000",
+      "-c", `http.lowSpeedTime=${secs}`,
+      "push", "--quiet", "--no-verify",
+    ], {
+      detached: true,
+      stdio: "ignore",
+      // --no-verify because the framework's own pre-push guard is interactive
+      // by design, and a guard asking a question with nobody there is a hang.
+      // GIT_TERMINAL_PROMPT=0 for the same reason, one layer down.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || `ssh -o ConnectTimeout=${secs} -o BatchMode=yes` },
+    });
+    child.unref();
+  } catch { /* the next SessionStart pushes it */ }
 }
 
 try { main(); } catch { /* never break session end */ }
