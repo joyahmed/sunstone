@@ -63,9 +63,35 @@ function Backup-Item {
         $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         $i = 1
         while (Test-Path -LiteralPath $bak) { $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')-$i"; $i++ }
-        Copy-Item -Recurse -Force -LiteralPath $Path -Destination $bak -ErrorAction SilentlyContinue
-        Write-Host "  backed up: $Path → $bak"
+        # ⛔ NEVER announce a backup that may not exist. This used to print
+        # "backed up: …" unconditionally after a SilentlyContinue copy, so every
+        # such line was an unverified claim — and callers then deleted the
+        # original on the strength of it. Verify, and report the truth.
+        #
+        # $errs matters as much as Test-Path: Copy-Item -Recurse keeps going
+        # after a per-file failure, so a partially-copied tree still leaves the
+        # destination present. A backup missing files is not a backup when the
+        # next statement is Remove-Item -Recurse -Force.
+        #
+        # This is load-bearing for the skills step specifically: an unreadable
+        # tree is now deliberately routed HERE (see Get-TreeSignature), and a
+        # recursive copy is exactly what fails on those files.
+        $errs = @()
+        Copy-Item -Recurse -Force -LiteralPath $Path -Destination $bak -ErrorAction SilentlyContinue -ErrorVariable errs
+        if ((Test-Path -LiteralPath $bak) -and $errs.Count -eq 0) {
+            Write-Host "  backed up: $Path → $bak"
+            return $true
+        }
+        $why = if ($errs.Count -gt 0) { $errs[0].ToString() } else { "destination was not created" }
+        Write-Host "  ! BACKUP FAILED for $Path — $why" -ForegroundColor Red
+        Write-Host "    nothing here will be deleted on the strength of a backup that does not exist." -ForegroundColor Red
+        if (Test-Path -LiteralPath $bak) {
+            Write-Host "    a PARTIAL copy was left at $bak — inspect it before trusting it." -ForegroundColor Red
+        }
+        return $false
     }
+    # Nothing there to lose.
+    return $true
 }
 
 # The PowerShell stand-in for `diff -rq` in setup.sh's step_skills: a sorted
@@ -124,7 +150,17 @@ function Test-SameFile {
 # identical one is left alone, so a re-run of setup produces no backup clutter.
 function Install-File {
     param([string]$Src, [string]$Dst)
-    if ((Test-Path -LiteralPath $Dst) -and -not (Test-SameFile $Src $Dst)) { Backup-Item $Dst }
+    # ⚠️ Backup-Item returns a value now, and an uncaptured return in PowerShell
+    # flows into THIS function's output — which then flows into Ship's. Assign
+    # it, both to keep the streams clean and because the answer matters: a
+    # single file is about to be overwritten with -Force, and if we could not
+    # preserve the old one we leave it alone rather than destroy it silently.
+    if ((Test-Path -LiteralPath $Dst) -and -not (Test-SameFile $Src $Dst)) {
+        if (-not (Backup-Item $Dst)) {
+            Write-Host "    skipped: $Dst left exactly as it was" -ForegroundColor Yellow
+            return
+        }
+    }
     $parent = Split-Path -Parent $Dst
     if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     Copy-Item -LiteralPath $Src -Destination $Dst -Force
@@ -525,6 +561,7 @@ if (Test-Path -LiteralPath "$ScriptDir\claude-setup\config\git-hooks") {
 
 $script:Installed = @()      # steps that installed something from the current root
 $script:Overridden = 0       # files of the current step that a later root ships too
+$script:SkillsSkipped = 0    # skill trees left untouched because their backup failed
 $script:LastRoot = $null     # the root applied last; set before the roots are applied
 $script:ClaudeGlobalAny = $false   # any root ships claude-setup\config\CLAUDE.global.md
 function Step-Done {
@@ -597,7 +634,18 @@ function Install-Skills {
                 # first — and only when it DIFFERS, so re-running an unchanged
                 # tree leaves no .bak clutter. Mirrors setup.sh:step_skills.
                 if (Test-Path -LiteralPath $target) {
-                    if ((Get-TreeSignature $d.FullName) -ne (Get-TreeSignature $target)) { Backup-Item $target }
+                    if ((Get-TreeSignature $d.FullName) -ne (Get-TreeSignature $target)) {
+                        # ⛔ If the backup did not happen, do NOT delete. Skip this
+                        # skill in this root and carry on: one unbackupable tree
+                        # must not cost the user their work, and must not abort
+                        # the whole install either — that failure mode is what
+                        # Get-TreeSignature's try/catch exists to prevent.
+                        if (-not (Backup-Item $target)) {
+                            Write-Host "    skipped: $target left exactly as it was" -ForegroundColor Yellow
+                            $script:SkillsSkipped++
+                            continue
+                        }
+                    }
                     Remove-Item -Recurse -Force -LiteralPath $target
                 }
                 Copy-Item -Recurse -LiteralPath $d.FullName -Destination $target
@@ -777,6 +825,14 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host " Setup Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
+
+# A skill left untouched because its backup failed is the one outcome a reader
+# must not scroll past — "Setup Complete" would otherwise imply it landed.
+if ($script:SkillsSkipped -gt 0) {
+    Write-Host "! $($script:SkillsSkipped) skill tree(s) were NOT updated: their backup failed, so the existing" -ForegroundColor Red
+    Write-Host "  copy was left exactly as it was rather than deleted. Look for BACKUP FAILED above." -ForegroundColor Red
+    Write-Host ""
+}
 
 # Each line reports what this run actually did: a skipped block above (no
 # node, or a checkout without the hook sources) must not turn into a claim
