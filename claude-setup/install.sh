@@ -168,6 +168,19 @@ step_skills() {
     fi
     for dest in "$HOME_DIR/.codex/skills" "$HOME_DIR/.config/opencode/skills" "$CLAUDE_DIR/skills"; do
       mkdir -p "$dest"
+      # ⚠️ A skill is replaced WHOLE (rm -rf + cp -r) rather than merged: a
+      # merge would strand files that an older version of the skill shipped
+      # and the new one dropped. That makes this the one step that can destroy
+      # work, because an existing <name>/ here is not necessarily an earlier
+      # copy of ours — it may be a skill the user wrote by hand under the same
+      # name. So back it up first. Only when it DIFFERS, so re-running an
+      # unchanged tree still leaves no .bak clutter, exactly like install_file.
+      # This mirrors setup.sh's step_skills deliberately: the two installers
+      # write the same destinations, and a file that survives one installer and
+      # is destroyed by the other is the worst kind of surprise.
+      if [ -d "$dest/$name" ] && ! diff -rq "${d%/}" "$dest/$name" >/dev/null 2>&1; then
+        backup "$dest/$name"
+      fi
       rm -rf "${dest:?}/$name"
       cp -r "${d%/}" "$dest/$name"
     done

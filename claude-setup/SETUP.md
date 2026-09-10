@@ -273,18 +273,16 @@ It exists for re-applying the extras alone. What it changes:
   `claude-setup/commands/*.md` → `~/.claude/commands/`; `claude-setup/config/agents/*.md` →
   `~/.claude/agents/`; and every file of `claude-setup/config/hooks/` → `~/.claude/hooks/`,
   executable, `context-mode-cache-heal.mjs` among them. Each file that would be overwritten and
-  differs is backed up as `<file>.bak.<timestamp>` first — with one exception, and it is **not**
-  the same as `setup.sh`'s.
+  differs is backed up as `<file>.bak.<timestamp>` first, the skills step included — its
+  `step_skills` is byte-identical to `setup.sh`'s, so both installers back up a `<name>/` that
+  differs from the incoming tree before replacing it whole.
 
-  ⛔ **`install.sh`'s skills step destroys without a backup.** It runs `rm -rf` on an existing
-  `~/.claude/skills/<name>/` (and the Codex and OpenCode copies) and replaces it, taking no
-  backup first — `install.sh:169-171`. `setup.sh` does back one up: its own skills step calls
-  `backup` whenever the existing directory differs from the incoming tree (`setup.sh:497`), for
-  the express reason that a `<name>/` already there may be a skill **you wrote by hand**, not an
-  older copy of the shipped one. So a hand-written skill whose name collides with one your memory
-  repo ships survives `setup.sh` and is lost to `install.sh`. Until the two agree, prefer
-  `setup.sh`, and copy anything hand-written out of `~/.claude/skills/` before running
-  `install.sh`.
+  ⚠️ **A skill directory is replaced whole (`rm -rf` + `cp -r`), never merged**, in all three
+  destinations. Merging would strand files an older version of the skill shipped and the new one
+  dropped. That makes this the one step that can destroy work, because a `<name>/` already there
+  is not necessarily an earlier copy of the shipped skill — it may be one **you wrote by hand**
+  under the same name. Hence the backup, and hence it firing only when the trees differ, so
+  re-running an unchanged one leaves no `.bak` clutter.
 
 It copies the three memory hook *scripts* — its hooks step ships that whole directory, all six
 files of it, exactly as `setup.sh` does — but it never **registers** them in `settings.json`, and
