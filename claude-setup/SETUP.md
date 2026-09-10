@@ -528,6 +528,17 @@ PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores ma
 
 ### Guard semantics
 
+⛔ **If you ever override `pre-push` and rewrite history, every old clone becomes an archive, not
+just a stale copy — and git will tell you it is safe when it is not.** After the rewrite, the
+commits an old clone holds are unreachable on the remote. `git log --branches --not --remotes`
+reports nothing unpushed, which is *correct against its tracking ref* and *misleading*, because
+the remote that ref names no longer contains those commits. "Everything is pushed" and "nothing
+would be lost" stop being the same statement. Before deleting such a clone, confirm the history
+survives **somewhere you can name** — a differently-named repo that was never force-pushed, or a
+`git bundle create <file> --all` taken from the clone itself. Content living on in a successor
+repo is not the same as history living on. This is a second-order cost of the override, which is
+part of why the guard asks for it explicitly.
+
 - **`pre-commit` in `MEMORY_REPOS`.** Staged paths are split into those under `MEMORY_DIR` and
   everything else. If both sets are non-empty the commit is refused with both lists printed and
   the fix spelled out (`git restore --staged <not yours>` then `git commit -- <MEMORY_DIR>`).
