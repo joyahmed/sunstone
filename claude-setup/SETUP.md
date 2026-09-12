@@ -61,10 +61,11 @@ What each platform is missing by default is covered row by row in [Prerequisites
 below; the short version is that macOS ships neither `python3` nor `timeout` and both have a
 fallback, and Windows ships no `python3` so the session hooks install as Node ports.
 
-⚠️ **Verified where, honestly:** Linux, WSL and native Windows are each exercised end to end —
-Windows first on 2026-09-11, under **PowerShell 7** (`setup.ps1` does not parse under Windows
-PowerShell 5.1). **macOS is the one platform still unproven:** reviewed, its GNU/BSD divergences
-handled, but never run on a Mac. [Verify](#verify) is what to check if you are first.
+✅ **Verified where, honestly:** all four platforms are exercised end to end — Windows first on
+2026-09-11, under **PowerShell 7** (`setup.ps1` does not parse under Windows PowerShell 5.1), and
+macOS on 2026-09-12 (Apple Silicon, `/bin/bash` 3.2, Xcode's `git`/`python3`): every step landed,
+`memory-doctor` 0 errors, memory injected on the first session. [Verify](#verify) is still what
+to check after a first run on any new machine.
 
 ⛔ **`setup.ps1` does not parse under Windows PowerShell 5.1** — the `powershell` that ships with
 Windows. It needs `pwsh` (PowerShell 7), which is a separate install. This is recorded first-hand
