@@ -14,7 +14,10 @@ Rules (the Node port, merge-settings-template.mjs, applies exactly the same):
   the group) is kept on the group that gets appended.
 - "statusLine": copied only if the target has none.
 - "env": each variable copied only if the target does not define it.
-- "permissions" is never read or written. No other template key is copied.
+- Any other top-level key whose template value is a scalar (true/false, a number,
+  a string) - autoCompactEnabled, say - is copied only if the target does not
+  have that key. Objects and arrays other than the three above are not copied.
+- "permissions" is never read or written. "$comment" is never copied.
 - Commands are written exactly as the template spells them ('~' included).
 - The file (and parent dirs) is created if missing. Writes are atomic.
 Prints one line per change, or "no change". Exit 0 on success (including a
@@ -133,6 +136,15 @@ def main():
                 changes.append(f"set env.{k}")
         if env:
             data["env"] = env
+
+    # Scalar preferences: copied only when the target does not have the key, so a
+    # value the user set by hand on this machine is never overridden.
+    for k, v in tpl.items():
+        if k in ("hooks", "statusLine", "env", "permissions", "$comment"):
+            continue
+        if isinstance(v, (bool, int, float, str)) and k not in data:
+            data[k] = v
+            changes.append(f"set {k}")
 
     if not changes:
         print("  no change")

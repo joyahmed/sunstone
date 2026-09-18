@@ -353,8 +353,12 @@ no entry under that event already runs - matched either by the **exact command s
 the command names a script, by that **script's basename** (the same two-part identity rule
 `merge-ai-memory-hook.py` uses, so a `~`-relative and an absolute path to one script count as one
 hook, and the framework's own `PreToolUse` entry - an inline `python3 -c` pipeline naming no
-script - is matched by its command string alone); copy `statusLine` and `env` keys only where the target has none - a capability the
-framework's own template never uses, since it carries neither; **never touch `permissions`**;
+script - is matched by its command string alone); copy `statusLine` and `env` keys only where the target has none, and likewise any other
+top-level key whose template value is a **scalar** (`autoCompactEnabled: false`, say) - copied
+only when the target lacks the key, so a value set by hand on a machine is never overridden;
+objects and arrays other than those three are not copied, and `$comment` never is - a
+capability the framework's own template never uses, since it carries none of them;
+**never touch `permissions`**;
 create `settings.json` when it does not exist; exit 0 and print one line per change, or
 `no change`. Commands in a template may use `~` and are written as they are - Claude
 Code expands them. `setup.sh` and `install.sh` call it once per root that carries a template,

@@ -15,6 +15,10 @@
 //   that gets appended.
 // - "statusLine": copied only if the target has none.
 // - "env": each variable copied only if the target does not define it.
+// - Any other top-level key whose template value is a scalar (true/false, a
+//   number, a string) - autoCompactEnabled, say - is copied only if the target
+//   does not have that key. Objects and arrays other than the three above are
+//   not copied. "permissions" is never touched; "$comment" is never copied.
 // - "permissions" is never read or written. No other template key is copied.
 // - Commands are written exactly as the template spells them ('~' included).
 // - The file (and parent dirs) is created if missing. Writes are atomic.
@@ -125,6 +129,16 @@ if (isObj(tpl.env)) {
     }
   }
   if (Object.keys(env).length) data.env = env;
+}
+
+// Scalar preferences: copied only when the target does not have the key, so a
+// value the user set by hand on this machine is never overridden.
+for (const [k, v] of Object.entries(tpl)) {
+  if (["hooks", "statusLine", "env", "permissions", "$comment"].includes(k)) continue;
+  if ((typeof v === "boolean" || typeof v === "number" || typeof v === "string") && !(k in data)) {
+    data[k] = v;
+    changes.push(`set ${k}`);
+  }
 }
 
 if (!changes.length) {
