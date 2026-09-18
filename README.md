@@ -5,6 +5,26 @@ what you know grows back around you - your memory, and whatever skills, commands
 keep beside it. No API, no vendor, no database, nothing to sign up for. The machine can die
 because the knowledge was never stored on it.
 
+What it does, in plumbing terms:
+
+- **A memory repo you own.** Your memory files live in a private git repo; the framework records its clone path in one line and never assumes a name or a layout.
+- **SessionStart pull and inject.** Every session begins by pulling that repo and injecting one file from it into context.
+- **SessionEnd commit.** Whatever the session wrote under the memory tree is committed when it ends, and the next start pushes it.
+- **Two git guards plus `memory-doctor`.** A mixed-staging guard and a force-push guard keep the repo safe when several sessions write to it; `memory-doctor` checks the wiring, the index and the drains.
+
+```bash
+git clone https://github.com/<owner>/sunstone sunstone   # the URL shown on this repository's page
+cd sunstone
+./setup.sh --memory-repo git@github.com:alice/my-memory.git   # or https://github.com/alice/my-memory.git
+```
+
+## The two-repo model
+
+| Repo | What it holds | Who owns it |
+|---|---|---|
+| **sunstone** (this one) | Hooks, setup scripts, `memory-doctor`, docs. Nothing personal. | Public, shared |
+| **your memory repo** | Your memory files, an optional `sunstone.conf`, and optionally your own skills, commands, agents, hooks and statusline in the framework's layout - the [overlay](claude-setup/SETUP.md#the-overlay-your-own-skills-commands-and-hooks). | You, private |
+
 > *A sunstone is the crystal Jor-El used to preserve Kryptonian knowledge past the destruction of
 > the planet. Kal-El inherits one, and planting it grows the whole Fortress of Solitude back.*
 
@@ -18,13 +38,6 @@ personal half lives in a repo you own. Two third-party conveniences do still shi
 template - a graphify hint on `Bash` searches and a context-mode cache self-heal at SessionStart -
 and both are listed under [What the framework deliberately does not
 ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship), with how to drop them.
-
-## The two-repo model
-
-| Repo | What it holds | Who owns it |
-|---|---|---|
-| **sunstone** (this one) | Hooks, setup scripts, `memory-doctor`, docs. Nothing personal. | Public, shared |
-| **your memory repo** | Your memory files, an optional `sunstone.conf`, and optionally your own skills, commands, agents, hooks and statusline in the framework's layout - the [overlay](claude-setup/SETUP.md#the-overlay-your-own-skills-commands-and-hooks). | You, private |
 
 The framework never assumes a name, a path or a layout for your memory repo beyond
 [the minimum](claude-setup/SETUP.md#the-memory-repo). Its clone path is recorded in the
@@ -74,12 +87,6 @@ wiring. ⚠️ It overwrites `CLAUDE.md`, replaces skill directories whole, and 
 first run, and see [Windows](claude-setup/SETUP.md#windows). After any first run on a new machine, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
 
 ## Quick start
-
-```bash
-git clone https://github.com/<owner>/sunstone sunstone   # the URL shown on this repository's page
-cd sunstone
-./setup.sh --memory-repo git@github.com:alice/my-memory.git   # or https://github.com/alice/my-memory.git
-```
 
 Then restart Claude Code, and check the result with `node claude-setup/scripts/memory-doctor.js`.
 The first session after that restart pulls `my-memory`, injects its memory file, and the
