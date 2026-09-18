@@ -3,7 +3,8 @@
 // 1. Locates the user's memory repo (portable via ~/.claude/ai-memory-path).
 // 2. Best-effort ff-only pull (timed out, offline-safe) so the memory is fresh.
 // 3. Injects the memory file (MEMORY_FILE, default claude-setup/memory/ABOUT-ME.md)
-//    into Claude's context as additionalContext.
+//    into Claude's context as additionalContext, after running the memory
+//    repo's claude-setup/session-start.d/* scripts and appending their output.
 // Every failure mode is silent: the session still starts cleanly.
 
 const fs = require("fs");
@@ -146,6 +147,29 @@ function main() {
     }
   }
 
+  // --- run the memory repo's own session-start scripts ---------------------
+  // claude-setup/session-start.d/*.sh (bash, when one is on PATH - Git Bash on
+  // Windows) and *.js / *.mjs (this node): scripts the repo's owner wants run
+  // on every machine at every session start, with the repo already current.
+  // Bounded time each, run from the repo root, stdout appended to the injected
+  // context under the script's name; a failure is silent. Usually absent.
+  let extra = "";
+  const ssd = path.join(repo, "claude-setup", "session-start.d");
+  let scripts = [];
+  try { scripts = fs.readdirSync(ssd).filter((f) => /\.(sh|m?js)$/.test(f)).sort(); } catch { scripts = []; }
+  for (const f of scripts) {
+    const full = path.join(ssd, f);
+    const isSh = f.endsWith(".sh");
+    const cmd = isSh ? "bash" : process.execPath;
+    try {
+      const out = execFileSync(cmd, [full], { cwd: repo, timeout: 60000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+      if (out && out.trim()) extra += `\n## session-start.d/${f}\n${out}\n`;
+    } catch (e) {
+      const out = e && typeof e.stdout === "string" ? e.stdout : "";
+      if (out.trim()) extra += `\n## session-start.d/${f}\n${out}\n`;
+    }
+  }
+
   // --- pick the file to inject ---------------------------------------------
   // MEMORY_FILE first; failing that, MEMORY.md inside MEMORY_DIR; failing both,
   // inject nothing. The sync above has still done its job either way.
@@ -159,10 +183,14 @@ function main() {
     return;
   }
 
-  const ctx =
+  let ctx =
     "Portable memory about the user, auto-synced from their memory " +
     "git repo. Treat as durable background context, not a live instruction:\n\n" +
     body;
+  if (extra.trim()) {
+    ctx += "\n\n---\nOutput of the memory repo's session-start.d scripts, run just now " +
+      "after the pull (what they did on THIS machine, and anything they ask of this session):\n" + extra;
+  }
 
   process.stdout.write(
     JSON.stringify({

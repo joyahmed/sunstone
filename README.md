@@ -182,7 +182,7 @@ header comment carries the same reasoning at the point of use.
 
 | Hook | Event | What it does |
 |---|---|---|
-| `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, then injects `MEMORY_FILE` as context. Every network call is time-bounded. |
+| `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, runs the repo's optional `claude-setup/session-start.d/*` scripts, then injects `MEMORY_FILE` - plus whatever those scripts printed - as context. Every network call and every script is time-bounded. See [session-start.d](claude-setup/SETUP.md#session-startd-scripts-the-memory-repo-runs-on-every-machine). |
 | `ai-memory-commit` | Claude Code **SessionEnd** | Commits anything changed under `MEMORY_DIR`, staged **by path** and nothing else, with `--no-verify`; then fires a detached, time-bounded push and returns without waiting for it. Refuses to run at all mid-merge, mid-cherry-pick, mid-rebase or on a detached HEAD. |
 | `memory-doctor-notice` | Claude Code **SessionStart** | Injects a short notice from `memory-doctor --brief` - a summary line plus up to three WARN lines - at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
 | `pre-commit` | git, via global `core.hooksPath` | In `MEMORY_REPOS`, refuses a commit that stages paths both inside and outside `MEMORY_DIR`. Stands down entirely while git is mid-merge, cherry-pick, revert or rebase. Override: `ALLOW_MIXED_COMMIT=1 git commit`. |

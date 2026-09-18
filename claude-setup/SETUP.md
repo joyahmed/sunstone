@@ -444,6 +444,8 @@ my-memory/
 └── claude-setup/
     ├── config/
     │   └── sunstone.conf        # optional
+    ├── session-start.d/         # optional - scripts run after every pull, on every machine
+    │   └── 10-something.sh
     └── memory/
         ├── ABOUT-ME.md          # MEMORY_FILE - injected into every session
         ├── MEMORY.md            # MEMORY_INDEX - one line per memory file
@@ -492,6 +494,28 @@ The branch needs an upstream. Without one, `memory-doctor` reports `sync` ERROR 
 can neither pull nor push (they stay silent about it, which is the point of the doctor). A
 plain-text index line such as `- coding-style.md - ...` is not a link and the doctor reports the
 file as unindexed.
+
+### session-start.d: scripts the memory repo runs on every machine
+
+`claude-setup/session-start.d/` is optional. When it exists, `ai-memory-sync` runs every
+`*.sh` in it (bash; the Node port also runs `*.js` / `*.mjs` under node) **after the pull and
+before the injection**, from the repo root, sorted by name, each with a 60-second bound. Whatever
+a script prints to stdout is appended to the injected context under `## session-start.d/<name>`;
+stderr is dropped; a non-zero exit is silent and the next script still runs; an absent directory
+costs nothing.
+
+It exists for one reason: **a change committed on one machine should reach every other machine
+without anyone typing anything there.** The pull already brings the files; this runs them. What
+belongs here is small and idempotent - a per-machine migration runner that stamps what it has
+done under `~/.claude/` and prints what it changed, a check that something is still wired - and
+its output should tell the session what happened, or what it is being asked to do next. What
+does not belong here is anything slow, interactive or surprising: the scripts run inside session
+start, on every machine that clones the repo, as the user.
+
+The framework ships nothing in this directory and never will; it is the memory repo's, like the
+overlay. ⚠️ A script here runs with the user's full permissions on every machine that pulls the
+repo - it is exactly as trusted as the repo's push access. Keep the memory repo private and its
+branch protected accordingly.
 
 ### `sunstone.conf` reference
 
