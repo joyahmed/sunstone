@@ -391,8 +391,8 @@ echo ""
 # claude-setup/config/{agents,hooks,settings.json,CLAUDE.global.md} — and it is
 # then applied as a SECOND install root, after this one, with identical rules.
 # Whatever both roots ship, the personal copy lands last and wins. This
-# checkout may ship none of these trees (the framework carries no skills and no
-# commands); then only the personal root contributes. --skip-overlay applies
+# checkout may ship none of these trees (the framework carries no skills, and
+# only the two supermode commands); then only the personal root contributes. --skip-overlay applies
 # this checkout only.
 #
 # Each step is one function taking the root as its argument; it prints
@@ -610,6 +610,27 @@ step_hooks() {
   step_end hooks "$root" "$n" "$n → ~/.claude/hooks (copied, not registered)"
 }
 
+# claude-setup/config/supermode.settings.json → ~/.claude/supermode.settings.json and
+# claude-setup/bin/supermode → ~/.local/bin/supermode. Supermode is opt-in per
+# launch: the launcher layers that file onto ONE session with `claude --settings`,
+# so auto-compaction off and the context guard never enter ~/.claude/settings.json.
+# The guard and gauge scripts arrive with step_hooks, the /supermode and /supercode
+# commands with step_commands.
+step_supermode() {
+  local root="$1" got="" n=0
+  if ship "$root" claude-setup/config/supermode.settings.json "$CLAUDE_DIR/supermode.settings.json"; then
+    got="settings → ~/.claude/supermode.settings.json"; n=$((n + 1))
+  fi
+  if ship "$root" claude-setup/bin/supermode "$HOME_DIR/.local/bin/supermode" x; then
+    got="${got:+$got, }launcher → ~/.local/bin/supermode"; n=$((n + 1))
+    case ":$PATH:" in
+      *":$HOME_DIR/.local/bin:"*) ;;
+      *) echo "    note: ~/.local/bin is not on PATH — add it, or run ~/.local/bin/supermode by path" ;;
+    esac
+  fi
+  step_end supermode "$root" "$n" "$got"
+}
+
 # claude-setup/config/settings.json → MERGED into ~/.claude/settings.json by
 # the template merger, never copied over it (a wholesale copy would discard
 # the hooks setup.sh registered and the permissions you have approved). The
@@ -687,6 +708,7 @@ apply_root() {  # <label> <root>
   step_commands "$root"
   step_subagents "$root"
   step_hooks "$root"
+  step_supermode "$root"
   step_git_hooks "$root"
   step_settings "$root"
   step_claude_global "$root"

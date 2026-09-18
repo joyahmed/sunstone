@@ -117,12 +117,18 @@ the `powershell` that ships with Windows**, which cannot parse the script — an
 
 ## What gets installed
 
-Eleven steps, run once from the framework root and again from your memory repo. In summary:
+Twelve steps, run once from the framework root and again from your memory repo. In summary:
 
-- **six hook scripts** in `~/.claude/hooks/` — `ai-memory-sync` and `ai-memory-commit` (each with
-  its Node port), `memory-doctor-notice.sh`, and `context-mode-cache-heal.mjs` — producing five
-  registered entries in `~/.claude/settings.json`: the three memory hooks, plus the settings
-  template's own `PreToolUse` and `SessionStart` pair;
+- **eight hook scripts** in `~/.claude/hooks/` — `ai-memory-sync` and `ai-memory-commit` (each with
+  its Node port), `memory-doctor-notice.sh`, `context-mode-cache-heal.mjs`, and supermode's
+  `ctx-gauge.mjs` and `context-guard.mjs` — producing five registered entries in
+  `~/.claude/settings.json`: the three memory hooks, plus the settings template's own `PreToolUse`
+  and `SessionStart` pair. The two supermode scripts are **not** registered there: they run only
+  in a session launched as supermode (next bullet);
+- **supermode** — `~/.claude/supermode.settings.json`, the `supermode` launcher in
+  `~/.local/bin/`, and two slash commands, `/supermode` and `/supercode`, in
+  `~/.claude/commands/`. Nothing in it changes an ordinary session; see
+  [Supermode and supercode](#supermode-and-supercode);
 - **two git hooks** in `~/.git-hooks/` (and the clone-time template `~/.git-templates/hooks/`),
   reached by a global `core.hooksPath`;
 - **`~/.claude/CLAUDE.md`**, rewritten on every run from the shipped `CLAUDE.global.md` — 27
@@ -135,8 +141,8 @@ Eleven steps, run once from the framework root and again from your memory repo. 
 - and a merge into `~/.claude/settings.json`. A framework-only install leaves that file holding
   **`hooks` and nothing else**: no `statusLine`, no `env`, and `permissions` is never touched.
 
-Everything else the layout allows — skills, slash commands, a statusline, Codex and OpenCode
-config, extra git hooks — is an empty slot that a framework-only install reports as `skipped`
+Everything else the layout allows — skills, further slash commands, a statusline, Codex and
+OpenCode config, extra git hooks — is an empty slot that a framework-only install reports as `skipped`
 until your memory repo fills it. The file-by-file list is [What setup
 installs](claude-setup/SETUP.md#what-setup-installs), and
 [Uninstall](claude-setup/SETUP.md#uninstall) undoes it. There are no opt-in flags for extra
@@ -200,6 +206,45 @@ checks the **wiring**, the **sync** state, the memory **index**, file **hygiene*
 machine-local **working tier**, per-project **repo stores** and **duplicates** across stores —
 [what each check catches](claude-setup/SETUP.md#checking-it-still-works).
 
+## Supermode and supercode
+
+Two ways of working that ship as procedures, not as defaults. Neither changes an ordinary
+session.
+
+**Supermode** is unattended work — the session keeps going after you have left the chair,
+with the checkpoints that make that safe. Launch it as `supermode` instead of `claude` (every
+argument passes through). That does three things, for that session only:
+
+- `SUPERMODE=1` in the environment — a successor session inherits it;
+- `supermode.settings.json` layered on with `claude --settings`: **auto-compaction off**, a
+  `PostToolUse` context guard, and your status line fronted by a gauge. Your
+  `~/.claude/settings.json` is not touched;
+- the `/supermode` command carries the loop: one slice → the repo's gate → commit on green →
+  a handoff note after **every** slice, because the model cannot see its own context gauge.
+
+The reason for the settings layer is compaction. When the window fills, Claude Code's default
+is to compact: the largest single request of the session, returning a summary without the
+numbers. Supermode hands off instead. Claude Code shows the percentage only to the status
+line, so `ctx-gauge.mjs` sits in front of yours (it delegates to `statusline-command.sh` /
+`.js`, or `$SUPERMODE_STATUSLINE`, and prints a one-liner when you have none) and writes it
+to `~/.claude/ctx/<session>.pct`. After every tool call `context-guard.mjs` reads it and, from
+**70%** (`SUPERMODE_CTX_PCT`), once per 5% band, tells the model in hook context: finish the
+slice, commit, write the handoff, start the successor (`supermode --bg --permission-mode auto
+"supermode: resume"`), stop. Without the gauge file — a `-p` run, say — it estimates from the
+transcript's `usage` against `SUPERMODE_CTX_WINDOW` (default 200000) and says the figure is an
+estimate. The guard exits immediately unless `SUPERMODE=1`, so registering it globally would
+cost nothing; the launcher is the opt-in.
+
+**Supercode** is width: `/supercode` fans the work out over concurrent agents — plain means
+the minimum that gives assurance (2–3 disjoint lenses, one refuter per finding), `max` means
+as wide as the work splits. It carries the four rules that make a fan-out pay (exclusive file
+ownership, hand over the verified facts, name the shared resources nobody may touch, gate
+centrally once) and the two things it cannot do (one shared file, ambiguous work). The two
+compose: a supermode session fans out at the minimum unless told `supercode max`.
+
+Both words are one person's; the mechanism is anyone's. Rename the commands in your memory
+repo's `claude-setup/commands/` if you want other words — a same-named file there wins.
+
 ## Layout
 
 ```
@@ -209,7 +254,7 @@ sunstone/
 ├── setup.ps1                      # Windows equivalent (Node hook ports; keeps its UTF-8 BOM)
 └── claude-setup/
     ├── SETUP.md                   # the runbook: flags, what lands where, verifying, uninstall
-    ├── install.sh                 # optional: re-applies the ten non-memory steps alone
+    ├── install.sh                 # optional: re-applies the eleven non-memory steps alone
     ├── scripts/
     │   └── memory-doctor.js
     └── config/
@@ -217,7 +262,9 @@ sunstone/
         │   ├── ai-memory-sync.sh / .js       # SessionStart (sh on POSIX, js on Windows)
         │   ├── ai-memory-commit.sh / .js     # SessionEnd
         │   ├── memory-doctor-notice.sh       # SessionStart notice
-        │   └── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
+        │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
+        │   ├── ctx-gauge.mjs                 # supermode: fronts your status line, writes the %
+        │   └── context-guard.mjs             # supermode: PostToolUse checkpoint nudge from 70%
         ├── git-hooks/
         │   ├── pre-commit                    # mixed-staging guard
         │   └── pre-push                      # force-push guard
@@ -228,14 +275,22 @@ sunstone/
         ├── merge-settings-template.py / .mjs # the template merger (one tool, two ports)
         ├── agents/                           # architect.md, verify.md → ~/.claude/agents/
         ├── settings.json                     # template merged into ~/.claude/settings.json
+        ├── supermode.settings.json           # → ~/.claude/; layered on supermode launches only
         └── CLAUDE.global.md                  # → ~/.claude/CLAUDE.md; a memory-repo copy wins
+    ├── bin/
+    │   ├── supermode                     # → ~/.local/bin/supermode (POSIX launcher)
+    │   └── supermode.ps1                 # → ~\.claude\bin\supermode.ps1 (Windows launcher)
+    └── commands/
+        ├── supermode.md                  # /supermode — the unattended procedure
+        └── supercode.md                  # /supercode — the fan-out procedure
 ```
 
-There is no `skills/`, no `commands/`, no `plugins/` and no statusline in that tree. They are
-overlay slots, filled by whatever your memory repo carries in the same relative layout.
+There is no `skills/`, no `plugins/` and no statusline in that tree, and `commands/` holds only
+the two above. They are overlay slots, filled by whatever your memory repo carries in the same
+relative layout.
 
-`claude-setup/install.sh` is a separate, optional script that re-applies the ten non-memory steps
-alone. It deliberately omits the eleventh, `git-hooks`, because installing hook files without
+`claude-setup/install.sh` is a separate, optional script that re-applies the eleven non-memory steps
+alone. It deliberately omits the twelfth, `git-hooks`, because installing hook files without
 also setting `core.hooksPath` would put them on disk where nothing runs them — and it registers
 no memory hooks, so on its own it leaves them installed and inert. `setup.sh` is what installs the
 memory layer; see [The second installer](claude-setup/SETUP.md#the-second-installer-installsh).

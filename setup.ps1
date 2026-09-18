@@ -767,6 +767,27 @@ function Install-GitHooks {
     Step-End "git-hooks" $Root $n "$n → ~\.git-hooks, ~\.git-templates\hooks"
 }
 
+# claude-setup\config\supermode.settings.json → ~\.claude\supermode.settings.json and
+# claude-setup\bin\supermode.ps1 → ~\.claude\bin\supermode.ps1. Supermode is opt-in per
+# launch: the launcher layers that file onto ONE session with `claude --settings`, so
+# auto-compaction off and the context guard never enter ~\.claude\settings.json. The
+# guard and gauge scripts arrive with the hooks step, /supermode and /supercode with
+# the commands step.
+function Install-Supermode {
+    param([string]$Root)
+    $got = @(); $n = 0
+    if (Ship $Root "claude-setup\config\supermode.settings.json" "$ClaudeDir\supermode.settings.json") {
+        $got += "settings → ~\.claude\supermode.settings.json"; $n++
+    }
+    if (Ship $Root "claude-setup\bin\supermode.ps1" "$ClaudeDir\bin\supermode.ps1") {
+        $got += "launcher → ~\.claude\bin\supermode.ps1"; $n++
+        if (-not (($env:PATH -split ';') -contains "$ClaudeDir\bin")) {
+            Write-Host "    note: add $ClaudeDir\bin to PATH to type `supermode`, or run the .ps1 by path"
+        }
+    }
+    Step-End "supermode" $Root $n ($got -join ", ")
+}
+
 function Install-Root {
     param([string]$Label, [string]$Root)
     $script:Installed = @()
@@ -785,6 +806,7 @@ function Install-Root {
     # anything else is registered by the settings.json of the root that ships it.
     $n = Ship-Dir $Root "claude-setup\config\hooks" $ClaudeHooks "*"
     Step-End "hooks" $Root $n "$n → ~\.claude\hooks (copied, not registered)"
+    Install-Supermode $Root
     Install-GitHooks $Root
     Install-Settings $Root
     Install-ClaudeGlobal $Root

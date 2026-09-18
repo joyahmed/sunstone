@@ -127,14 +127,50 @@ clutter — the same rule the per-file copy helper applies.
 | `~/AGENTS.md`, `~/CLAUDE.md` | `agents/AGENTS.md`, `agents/CLAUDE.md` under either root | Overlay step; an existing file is backed up first. Neither is shipped by the framework today. `~/.claude/CLAUDE.md` is **not** written from here: it comes from `claude-setup/config/CLAUDE.global.md` (last row), and only falls back to `agents/CLAUDE.md` if no root ships a `CLAUDE.global.md` at all — which, since the framework ships one, does not happen in practice. |
 | `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md`, `~/.codex/rules/` | `config/codex-config.toml`, `codex-hooks.json`, `codex-AGENTS.md`, `codex-rules/` under either root | Overlay step, Codex CLI configuration. **The framework ships none of these**, so from the framework root this step always reports `skipped`; it is a slot for your memory repo to fill if you use Codex. |
 | `~/.config/opencode/opencode.jsonc`, `~/.opencode/plugins/*.js` | `config/opencode-config.jsonc`, `plugins/*.js` under either root | Overlay step, OpenCode configuration. **The framework ships neither half** — no `opencode.jsonc` and no `plugins/` directory at all — so from the framework root this step always reports `skipped`. Both are slots for your memory repo. |
-| `~/.claude/commands/*.md` | `claude-setup/commands/*.md` under either root | Overlay step, slash commands. The framework ships none. |
+| `~/.claude/commands/*.md` | `claude-setup/commands/*.md` under either root | Overlay step, slash commands. The framework ships two, `supermode.md` and `supercode.md` — the procedures behind [Supermode](#supermode); a memory repo carrying the same filename replaces either. |
 | `~/.claude/agents/*.md` | `claude-setup/config/agents/*.md` under either root | Overlay step, subagent files; the framework ships `architect.md` and `verify.md`. ⚠️ **Both pin `model: fable` in their frontmatter — the highest-priced tier.** Nothing in Claude Code switches the main model on a condition, so a subagent file is the mechanism for "escalate this kind of work to a stronger model", and these two exist to be escalated to; but they are installed by a framework a stranger runs sight-unseen, and every invocation of `architect` or `verify` bills at that tier. Change the `model:` line (or delete the two files from `~/.claude/agents/`) if that is not what you want. |
-| `~/.claude/hooks/*` | `claude-setup/config/hooks/*` under either root | Overlay step, `chmod +x`. Copied only: a memory-repo hook is registered solely by the memory repo's `settings.json` template. |
+| `~/.claude/hooks/*` | `claude-setup/config/hooks/*` under either root | Overlay step, `chmod +x`. Copied only: a memory-repo hook is registered solely by the memory repo's `settings.json` template. From the framework root this lands the two supermode scripts too, `ctx-gauge.mjs` and `context-guard.mjs` — registered by `supermode.settings.json` (next two rows), never by `settings.json`. |
+| `~/.claude/supermode.settings.json` | `claude-setup/config/supermode.settings.json` under either root | Overlay step, plain copy. The settings a supermode session runs under — `autoCompactEnabled: false`, `statusLine` → `ctx-gauge.mjs`, `PostToolUse` → `context-guard.mjs`. Reaches a session only through the launcher's `claude --settings`; it is never merged into `~/.claude/settings.json`. See [Supermode](#supermode). |
+| `~/.local/bin/supermode` | `claude-setup/bin/supermode` under either root | Overlay step, `chmod +x`. The launcher: `SUPERMODE=1 exec claude --settings ~/.claude/supermode.settings.json "$@"`. Setup notes when `~/.local/bin` is not on `PATH`; it does not edit your shell profile. On Windows the twin is `claude-setup\bin\supermode.ps1` → `~\.claude\bin\supermode.ps1`. |
 | `~/.claude/settings.json` (again) | `claude-setup/config/settings.json` under either root, via `merge-settings-template.py` — or `merge-settings-template.mjs` under `node` when there is no `python3` | Overlay step, after the memory-hook registration above. Framework template merged first, memory repo's second; see [The template merger](#the-template-merger). The framework's template contributes exactly two hook entries and no other key: a `PreToolUse` hint on `Bash` and a `SessionStart` entry for `context-mode-cache-heal.mjs`. It carries **no `statusLine` and no `env`** — those are preferences, and belong in your own template, which is merged after this one. Skipped, with a note, only when the machine has neither interpreter. |
 | `~/.claude/CLAUDE.md` | `claude-setup/config/CLAUDE.global.md` under either root | Overlay step — but the framework ships this file, so **a plain `setup.sh` writes it on every run, `--skip-overlay` included**. A `~/.claude/CLAUDE.md` of your own is replaced, backed up first as `CLAUDE.md.bak.<timestamp>`; a memory repo that carries its own copy wins over the framework's. Keep anything you want to survive a re-run in the memory repo's copy, not in the installed file. |
 
 `setup.sh` creates the target directories it needs if they do not exist. It installs no
-packages. With `--skip-overlay`, or when neither root carries a tree, the overlay steps print
+packages.
+
+### Supermode
+
+Supermode is unattended work — the session keeps going after you have left, with the
+checkpoints that make that safe — and it is **opt-in per launch**, which is why it does not
+appear in `~/.claude/settings.json` at all. `supermode [args…]` runs
+`SUPERMODE=1 claude --settings ~/.claude/supermode.settings.json [args…]`; that file layers
+three things onto the one session:
+
+- **`autoCompactEnabled: false`.** Compaction is the largest single request of a session and
+  returns a summary without the numbers. A supermode session hands off to a fresh one instead.
+- **`statusLine` → `ctx-gauge.mjs`.** Claude Code gives the context percentage to the status
+  line and to nothing else, and the model cannot see it. The gauge reads the status-line JSON,
+  writes `~/.claude/ctx/<session_id>.pct`, then runs your own status line on the same input
+  (`~/.claude/statusline-command.sh`, `.js`, `.mjs`, or `$SUPERMODE_STATUSLINE`) and prints its
+  output — or a one-line `supermode · ctx NN% · <model> · <dir>` when you have none.
+- **`PostToolUse` → `context-guard.mjs`.** After every tool call: read the gauge (fresh within
+  10 minutes; otherwise estimate from the transcript's last `usage` over `SUPERMODE_CTX_WINDOW`,
+  default 200000, and say so); from `SUPERMODE_CTX_PCT` (default 70), once per 5% band, inject
+  hook context telling the model to checkpoint — finish the slice at a green gate, commit, write
+  the handoff, start the successor, stop, do not compact. Exits at once unless `SUPERMODE=1`.
+
+The procedure itself is the `/supermode` command; `/supercode` is its companion for fanning
+work out over concurrent agents. Both are ordinary command files under
+`~/.claude/commands/` — replace either from your memory repo by shipping the same filename.
+The successor a session starts is `supermode --bg --permission-mode auto "supermode: resume"`
+from the repo root, so `~/.local/bin` (or the `.ps1` on Windows) must be on `PATH` for the
+session that runs it — setup prints a note when it is not.
+
+Verify: `SUPERMODE=1 SUPERMODE_CTX_PCT=1 supermode -p "run one Bash tool call, then say whether
+you received hook context mentioning 'supermode context guard'" --max-turns 3` — a
+one-shot session with the threshold forced to 1% answers yes and quotes the notice. The
+`.pct` gauge is not written in `-p` mode (no status line renders), so that run exercises the
+transcript estimate; an interactive `supermode` session exercises the gauge. With `--skip-overlay`, or when neither root carries a tree, the overlay steps print
 `skipped` and write nothing; the framework root has no `skills/`, `commands/` or `agents/` at
 the top level, so a bare framework install leaves `~/.claude/skills/` and `~/.claude/commands/`
 untouched.
@@ -263,10 +299,10 @@ It exists for re-applying the extras alone. What it changes:
   **or** `node` — the `.py` and `.mjs` mergers are two ports of one tool, so the step is skipped
   with a note only when neither interpreter is present. `setup.sh` merges the same template, so on
   a machine it has already run this step reports `no change`.
-- **Copies** — the eight file-copying steps, run per root in this order, from the same sources
-  `setup.sh` uses (they are eight of the ten steps `install.sh` runs in a root; the settings merge
-  and `CLAUDE.global.md`, the two bullets above, are the other two). `setup.sh` runs an eleventh
-  step, `git-hooks`, that `install.sh` deliberately does not — see below.
+- **Copies** — the nine file-copying steps, run per root in this order, from the same sources
+  `setup.sh` uses (they are nine of the eleven steps `install.sh` runs in a root; the settings
+  merge and `CLAUDE.global.md`, the two bullets above, are the other two). `setup.sh` runs a
+  twelfth step, `git-hooks`, that `install.sh` deliberately does not — see below.
   `claude-setup/config/statusline-command.sh` → `~/.claude/` — **a slot the framework leaves
   empty**, so this one reports `skipped` unless your memory repo fills it;
   `skills/<name>/` → `~/.claude/skills/<name>`, `~/.codex/skills/<name>` **and**
@@ -722,6 +758,13 @@ bullet, one thing that is deliberately *not* one, because this file used to clai
   POSIX `memory-doctor-notice.sh` and registers it as `bash "...\memory-doctor-notice.sh"`, run by
   Git for Windows' shell; it prefers a `.js` port whenever one is shipped beside it.
   `memory-doctor` itself can always be run by hand.
+- **Supermode on Windows** is the same two Node scripts (they have no shell dependency) plus
+  `~\.claude\bin\supermode.ps1` in place of `~/.local/bin/supermode`; `setup.ps1` prints a note
+  when `~\.claude\bin` is not on `PATH`. The layered file is the same
+  `~\.claude\supermode.settings.json`, and `ctx-gauge.mjs` delegates to a
+  `statusline-command.js` there exactly as it does to the `.sh` on POSIX. ⚠️ **`setup.ps1`'s
+  supermode step is typed, not run** — this repo's Windows verification predates it; the POSIX
+  step and both scripts are verified (see [Supermode](#supermode)).
 - **The statusline is a slot on both platforms, and the framework fills neither.** *When a root
   ships* `claude-setup/config/statusline-command.js`, `setup.ps1` installs it to
   `~\.claude\statusline-command.js` and passes it to `claude-setup/config/merge-claude-settings.mjs`
@@ -857,12 +900,18 @@ rm -f ~/.claude/git-config.previous
 
 # 2. Claude Code: the hook scripts and the state files. Setup ships the whole
 #    claude-setup/config/hooks/ directory, not just the three memory hooks, so
-#    all six go here. A personal root may have added more — see Overlay
+#    all eight go here. A personal root may have added more — see Overlay
 #    residue below.
 for h in ai-memory-sync.sh ai-memory-sync.js ai-memory-commit.sh ai-memory-commit.js \
-         memory-doctor-notice.sh context-mode-cache-heal.mjs; do
+         memory-doctor-notice.sh context-mode-cache-heal.mjs ctx-gauge.mjs context-guard.mjs; do
   rm -f ~/.claude/hooks/$h
 done
+# Supermode: the layered settings file, the launcher, the two commands, and the
+# per-session gauge files the guard wrote. None of it is referenced from
+# settings.json, so nothing else needs editing.
+rm -f ~/.claude/supermode.settings.json ~/.local/bin/supermode ~/.claude/bin/supermode.ps1
+rm -f ~/.claude/commands/supermode.md ~/.claude/commands/supercode.md
+rm -rf ~/.claude/ctx
 # The statusline: the framework ships none, so these exist only if YOUR memory
 # repo shipped statusline-command.sh (setup.sh) or .js (setup.ps1), or an older
 # version of this framework left one behind. If you remove them, remove the
@@ -915,8 +964,9 @@ grep -ls 'ALLOW_FORCE_PUSH\|ALLOW_MIXED_COMMIT' ~/src/*/.git/hooks/pre-commit ~/
 
 (adjust `~/src/*` to wherever you keep repos; both installed hooks name their override variable).
 
-**Overlay residue.** Step 2 names what the *framework* root ships (the six hook scripts, the two
-guards in `~/.git-hooks/`, the two subagent files). A statusline and anything under
+**Overlay residue.** Step 2 names what the *framework* root ships (the eight hook scripts, the two
+guards in `~/.git-hooks/`, the two subagent files, the supermode settings file, launcher and two
+commands). A statusline and anything under
 `~/.opencode/plugins/` are **not** in that list — the framework leaves both slots empty, so
 whatever is at `~/.claude/statusline-command.*` or `~/.opencode/plugins/*.js` came from your
 memory repo or from an older version of this framework. Whatever the **memory repo** root added

@@ -10,8 +10,8 @@
 #   2. the personal memory repo recorded in ~/.claude/ai-memory-path (or
 #      ~/.ai-memory), when it carries the same relative layout — the overlay.
 # Whatever both roots ship, the personal copy lands last and wins. The
-# framework may ship none of the optional trees (it carries no skills and no
-# commands); then only the personal root contributes.
+# framework may ship none of the optional trees (it carries no skills, and
+# only the two supermode commands); then only the personal root contributes.
 #
 # Run from anywhere:  bash claude-setup/install.sh [--skip-overlay]
 # Idempotent. Backs up anything it would change to *.bak.<timestamp> (an
@@ -260,6 +260,25 @@ step_hooks() {
   step_end hooks "$root" "$n" "$n → ~/.claude/hooks (copied, not registered)"
 }
 
+# claude-setup/config/supermode.settings.json → ~/.claude/supermode.settings.json,
+# claude-setup/bin/supermode → ~/.local/bin/supermode. Opt-in per launch: the
+# launcher layers the file onto ONE session with `claude --settings`; nothing
+# here touches ~/.claude/settings.json. Same step as setup.sh's.
+step_supermode() {
+  local root="$1" got="" n=0
+  if ship "$root" claude-setup/config/supermode.settings.json "$CLAUDE_DIR/supermode.settings.json"; then
+    got="settings → ~/.claude/supermode.settings.json"; n=$((n + 1))
+  fi
+  if ship "$root" claude-setup/bin/supermode "$HOME_DIR/.local/bin/supermode" x; then
+    got="${got:+$got, }launcher → ~/.local/bin/supermode"; n=$((n + 1))
+    case ":$PATH:" in
+      *":$HOME_DIR/.local/bin:"*) ;;
+      *) echo "    note: ~/.local/bin is not on PATH — add it, or run ~/.local/bin/supermode by path" ;;
+    esac
+  fi
+  step_end supermode "$root" "$n" "$got"
+}
+
 # claude-setup/config/settings.json → MERGED into ~/.claude/settings.json by
 # the template merger, never copied over it (a wholesale copy would discard
 # the hooks setup.sh registered and the permissions you have approved). The
@@ -324,6 +343,7 @@ apply_root() {  # <label> <root>
   step_commands "$root"
   step_subagents "$root"
   step_hooks "$root"
+  step_supermode "$root"
   step_settings "$root"
   step_claude_global "$root"
   echo ""
