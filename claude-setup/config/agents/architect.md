@@ -1,7 +1,7 @@
 ---
 name: architect
-description: Fable-powered planning and re-verification. Use for plan docs, schema or service-boundary decisions, and "is this claim still true" sweeps of a work queue or plan against the code. Returns a checkmark plan or a verified findings list; does not edit.
-model: fable
+description: Planning and re-verification. Use for plan docs, schema or service-boundary decisions, and "is this claim still true" sweeps of a work queue or plan against the code. Returns a checkmark plan or a verified findings list; does not edit.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 

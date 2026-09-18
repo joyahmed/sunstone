@@ -134,9 +134,10 @@ Twelve steps, run once from the framework root and again from your memory repo. 
 - **`~/.claude/CLAUDE.md`**, rewritten on every run from the shipped `CLAUDE.global.md` — 27
   lines on where a memory goes, how to write one, and session continuity. Keep anything you want
   to survive a re-run in your memory repo's own copy, which wins over the framework's;
-- **two subagent files** in `~/.claude/agents/` — ⚠️ both pin `model: fable`, the highest-priced
-  tier, and every invocation bills there. Change the `model:` line or delete them if that is not
-  what you want;
+- **two subagent files** in `~/.claude/agents/` — `architect` and `verify`, both pinned to
+  `model: sonnet`, the mid tier, so a framework a stranger runs sight-unseen does not bill at the
+  top one. To raise the tier, ship your own copies from your memory repo's
+  `claude-setup/config/agents/` with the `model:` line you want — a same-named file there wins;
 - **the two single-line path files** above;
 - and a merge into `~/.claude/settings.json`. A framework-only install leaves that file holding
   **`hooks` and nothing else**: no `statusLine`, no `env`, and `permissions` is never touched.

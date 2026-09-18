@@ -1,7 +1,7 @@
 ---
 name: verify
-description: Fable-powered second opinion. Use when the same gate (test, typecheck, build, app boot) has failed twice in a row, or before committing any change in a security- or money-sensitive area. Diagnoses; does not edit.
-model: fable
+description: A second opinion. Use when the same gate (test, typecheck, build, app boot) has failed twice in a row, or before committing any change in a security- or money-sensitive area. Diagnoses; does not edit.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
