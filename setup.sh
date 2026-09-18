@@ -63,7 +63,7 @@ done
 # resolved with it, and the two guards are installed by pointing the GLOBAL
 # core.hooksPath at ~/.git-hooks. Checked here, before the banner, because a
 # missing git used to surface as a bare "git: command not found" halfway
-# through — after the hook files had already landed, which is exactly the
+# through - after the hook files had already landed, which is exactly the
 # half-configured machine the ordering below is designed to prevent.
 if ! command -v git >/dev/null 2>&1; then
   echo "! git is required and was not found on PATH; nothing has been installed." >&2
@@ -77,7 +77,7 @@ echo ""
 
 # ── Helpers ──────────────────────────────────────
 
-# backup <path> — copy an existing file or directory to <path>.bak.<timestamp>.
+# backup <path> - copy an existing file or directory to <path>.bak.<timestamp>.
 backup() {
   local src="$1"
   if [ -f "$src" ] || [ -d "$src" ]; then
@@ -90,7 +90,7 @@ backup() {
   fi
 }
 
-# install_copy <src> <dst> — copy <src> over <dst>. An existing <dst> that
+# install_copy <src> <dst> - copy <src> over <dst>. An existing <dst> that
 # differs is backed up first; an identical one is left alone, so a re-run of
 # setup produces no backup clutter.
 install_copy() {
@@ -102,13 +102,13 @@ install_copy() {
   cp "$src" "$dst"
 }
 
-# install_file <src> <dst> — install_copy, then mark <dst> executable.
+# install_file <src> <dst> - install_copy, then mark <dst> executable.
 install_file() {
   install_copy "$1" "$2"
   chmod +x "$2"
 }
 
-# read_path_file <file> — the first line of a one-line path file, TRIMMED (a
+# read_path_file <file> - the first line of a one-line path file, TRIMMED (a
 # path may contain spaces, so whitespace is never squeezed out of it). Prints
 # nothing when the file is missing.
 read_path_file() {
@@ -116,7 +116,7 @@ read_path_file() {
   head -n1 "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
-# is_git_url <spec> — true for scheme://... and for the scp form, which must
+# is_git_url <spec> - true for scheme://... and for the scp form, which must
 # START with user@host: (the same rule setup.ps1 applies; a local directory
 # named "a@b:c" deep in a path is not a URL).
 is_git_url() {
@@ -139,8 +139,8 @@ conf_get() {
     # Byte-for-byte the body of conf_get in claude-setup/config/hooks/
     # ai-memory-sync.sh: the two must agree or setup's closing summary names a
     # different memory file than the hook actually injects. Leading whitespace
-    # is kept until the comment rule has run — KEY=#x is the value "#x", while
-    # KEY= #x is a comment (empty → the default) — and a quoted value runs to
+    # is kept until the comment rule has run - KEY=#x is the value "#x", while
+    # KEY= #x is a comment (empty → the default) - and a quoted value runs to
     # the next '"', so anything after the closing quote is ignored.
     val="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" 2>/dev/null | tail -n1 \
            | sed -e "s/^[[:space:]]*${key}[[:space:]]*=//" -e 's/[[:space:]]*$//')"
@@ -162,7 +162,7 @@ MERGER="$SCRIPT_DIR/claude-setup/config/merge-settings-template.py"
 MERGER_JS="$SCRIPT_DIR/claude-setup/config/merge-settings-template.mjs"
 # Whether the user had a settings.json before this run. The hook registration
 # below creates one, so without this flag the template merge that follows would
-# "back up" a file the user never wrote — a .bak of an intermediate state
+# "back up" a file the user never wrote - a .bak of an intermediate state
 # nobody would ever want restored.
 SETTINGS_PREEXISTED=0
 [ -f "$SETTINGS" ] && SETTINGS_PREEXISTED=1
@@ -188,7 +188,7 @@ settle_settings_backup() {
 #
 # ⛔ This step runs before anything else is written. A typo in --memory-repo or
 # a failed clone (no SSH key for a git@ URL, say) exits 1 here, with the global
-# git config, ~/.git-hooks and ~/.claude untouched — so "setup stopped" means
+# git config, ~/.git-hooks and ~/.claude untouched - so "setup stopped" means
 # "nothing landed", and there is nothing to roll back. Earlier versions
 # installed the git hooks first, and a failure left a half-configured machine
 # with no message saying so.
@@ -228,14 +228,14 @@ elif [ -z "$MEMORY_REPO_SPEC" ]; then
 fi
 
 # 2) Resolve it: a local path is used in place; a URL is cloned into --clone-to,
-#    or by default into ~/.ai-memory — the one path every hook also tries when
+#    or by default into ~/.ai-memory - the one path every hook also tries when
 #    ~/.claude/ai-memory-path is missing, so a lost path file still finds it.
 #    An existing clone at the destination is reused.
 #
 #    --skip-memory short-circuits the whole block, MEMORY_REPO_SPEC or not: the
 #    flag promises the path file is left alone, and SUNSTONE_MEMORY_REPO being
 #    exported in the environment must not quietly break that promise (it used
-#    to — the spec was resolved, cloned and written one line after the script
+#    to - the spec was resolved, cloned and written one line after the script
 #    said it would not touch anything). setup.ps1 keeps the same shape.
 if [ "$SKIP_MEMORY" != "1" ] && [ -n "$MEMORY_REPO_SPEC" ]; then
   if is_git_url "$MEMORY_REPO_SPEC"; then
@@ -290,26 +290,26 @@ echo ""
 # which is why it is used; the template is kept in step only as a fallback if
 # core.hooksPath is ever unset by hand.
 #
-# ⚠️ **A repo-local `core.hooksPath` overrides the global one completely** —
+# ⚠️ **A repo-local `core.hooksPath` overrides the global one completely** -
 # git does not merge them, and there is no chaining at that level. A repo that
 # sets its own hooks directory is not reached by the global setting; the files
 # have to be copied into that directory as well. **Any coverage check that
-# reads `.git/hooks` is wrong** — resolve each repo's effective hooks dir
+# reads `.git/hooks` is wrong** - resolve each repo's effective hooks dir
 # instead, or you will report gaps that do not exist and miss ones that do.
 #
 # ⚠️ The source of truth is claude-setup/config/git-hooks/* in this repo; the
 # live copies are ~/.git-hooks/*. **Pulling this repo does not update the live
-# copies** — re-run setup.sh after a pull that touches a hook.
+# copies** - re-run setup.sh after a pull that touches a hook.
 #
 # WHICH hooks land is not decided here. The files are installed per install
 # root by step_git_hooks, exactly like every other tree, so the personal repo
 # can ship guards of its own and can override a shipped one by carrying the
 # same filename. This section only prepares the directories and points git at
-# them — a one-time global setting, not a per-root one.
+# them - a one-time global setting, not a per-root one.
 #
 # The framework itself ships only the two conf-driven guards, pre-commit and
-# pre-push. Anything opinionated about commit CONTENT — a message
-# rewriter, a template, a linter — belongs in a personal repo rather than
+# pre-push. Anything opinionated about commit CONTENT - a message
+# rewriter, a template, a linter - belongs in a personal repo rather than
 # in a framework other people install: carrying the file there IS the opt-in,
 # which is why there is no flag to gate it with.
 echo -e "${CYAN}Preparing global git hooks (memory staging guard + force-push guard)...${NC}"
@@ -387,8 +387,8 @@ echo ""
 # ── Install roots: this checkout, then the personal repo (the overlay) ─────
 #
 # The personal memory repo MAY carry the same relative layout as this checkout
-# — skills/, agents/, config/, plugins/, claude-setup/commands/,
-# claude-setup/config/{agents,hooks,settings.json,CLAUDE.global.md} — and it is
+# - skills/, agents/, config/, plugins/, claude-setup/commands/,
+# claude-setup/config/{agents,hooks,settings.json,CLAUDE.global.md} - and it is
 # then applied as a SECOND install root, after this one, with identical rules.
 # Whatever both roots ship, the personal copy lands last and wins. This
 # checkout may ship none of these trees (the framework carries no skills, and
@@ -399,8 +399,8 @@ echo ""
 # "<step>: from <root>" or "<step>: skipped" and records what it installed for
 # the summary at the end.
 
-# The overlay root: the repo resolved above, or — with --skip-memory or when
-# nothing was passed and no terminal asked — the repo already recorded in
+# The overlay root: the repo resolved above, or - with --skip-memory or when
+# nothing was passed and no terminal asked - the repo already recorded in
 # ~/.claude/ai-memory-path (or ~/.ai-memory, the hooks' own fallback).
 OVERLAY_ROOT=""
 if [ "$SKIP_OVERLAY" != "1" ]; then
@@ -433,7 +433,7 @@ step_done() {  # <step> <root> [detail]
   INSTALLED="${INSTALLED:+$INSTALLED, }$1"
 }
 step_skip() { echo "  $1: skipped"; }
-# step_end <step> <root> <count> <detail> — the one line every step prints.
+# step_end <step> <root> <count> <detail> - the one line every step prints.
 step_end() {
   local step="$1" root="$2" n="$3" detail="$4"
   if [ "$n" -gt 0 ]; then
@@ -447,7 +447,7 @@ step_end() {
   OVERRIDDEN=0
 }
 
-# ship <root> <rel> <dst> [x] — install <root>/<rel> at <dst> (executable with
+# ship <root> <rel> <dst> [x] - install <root>/<rel> at <dst> (executable with
 # "x") unless a LATER root ships the same <rel>: the last root wins without the
 # earlier copy landing first, which would back the file up on every run.
 # Returns 0 installed, 1 not shipped by this root, 2 overridden.
@@ -461,7 +461,7 @@ ship() {
   if [ "$mode" = "x" ]; then install_file "$root/$rel" "$dst"; else install_copy "$root/$rel" "$dst"; fi
 }
 
-# ship_dir <root> <rel-dir> <dst-dir> <glob> [x] — ship every matching regular
+# ship_dir <root> <rel-dir> <dst-dir> <glob> [x] - ship every matching regular
 # file of <root>/<rel-dir> into <dst-dir>; leaves the number installed in
 # SHIPPED (a variable, not stdout: a subshell would lose the OVERRIDDEN count).
 SHIPPED=0
@@ -475,7 +475,7 @@ ship_dir() {
 }
 
 # skills/<name>/ → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills
-# (each <name> replaced whole — a skill is a tree, not a file to diff — and a
+# (each <name> replaced whole - a skill is a tree, not a file to diff - and a
 # name the later root also ships is left to that root).
 step_skills() {
   local root="$1" n=0 d name dest
@@ -491,7 +491,7 @@ step_skills() {
       # merge would strand files that an older version of the skill shipped
       # and the new one dropped. That makes this the one step that can destroy
       # work, because an existing <name>/ here is not necessarily an earlier
-      # copy of ours — it may be a skill the user wrote by hand under the same
+      # copy of ours - it may be a skill the user wrote by hand under the same
       # name. So back it up first. Only when it DIFFERS, so re-running an
       # unchanged tree still leaves no .bak clutter, exactly like install_file.
       if [ -d "$dest/$name" ] && ! diff -rq "${d%/}" "$dest/$name" >/dev/null 2>&1; then
@@ -510,7 +510,7 @@ step_skills() {
 # user-level instructions from ~/.claude/CLAUDE.md; a file at the home root is
 # only picked up as a project-parent file when a project lives directly under
 # $HOME. A CLAUDE.global.md shipped by either root takes ~/.claude/CLAUDE.md
-# instead — see step_claude_global.
+# instead - see step_claude_global.
 step_agents() {
   local root="$1" got="" n=0
   if ship "$root" agents/AGENTS.md "$HOME_DIR/AGENTS.md"; then
@@ -557,7 +557,7 @@ step_commands() {
   step_end commands "$root" "$n" "$n → ~/.claude/commands"
 }
 
-# claude-setup/config/agents/*.md → ~/.claude/agents/ — nothing in Claude Code
+# claude-setup/config/agents/*.md → ~/.claude/agents/ - nothing in Claude Code
 # switches the main model on a condition, so subagent files are the mechanism
 # for "escalate this kind of work to a stronger model".
 step_subagents() {
@@ -568,7 +568,7 @@ step_subagents() {
 
 # claude-setup/config/hooks/* → ~/.claude/hooks/ (executable). Scripts are only
 # COPIED here, never registered: the framework's memory hooks are registered
-# by setup.sh, anything else — a personal hook in particular — by the
+# by setup.sh, anything else - a personal hook in particular - by the
 # settings.json of the root that ships it (step_settings).
 # claude-setup/config/git-hooks/* → ~/.git-hooks/ and ~/.git-templates/hooks/.
 # An overlay step like every other one: whatever both roots ship, the personal
@@ -593,7 +593,7 @@ step_git_hooks() {
     if [ -e "$HOME_DIR/.git-hooks/$name" ] && ! cmp -s "$f" "$HOME_DIR/.git-hooks/$name"; then
       echo -e "  ${YELLOW}! $HOME_DIR/.git-hooks/$name exists and differs; replacing it (backup kept beside it).${NC}"
       echo    "    if that was your own hook rather than an earlier copy from this framework, its logic"
-      echo    "    no longer runs: move it into <repo>/.git/hooks/$name — the shipped $name chains to it."
+      echo    "    no longer runs: move it into <repo>/.git/hooks/$name - the shipped $name chains to it."
     fi
     install_file "$f" "$HOME_DIR/.git-hooks/$name"
     # Keep the clone-time template in step, as a fallback if core.hooksPath is
@@ -625,7 +625,7 @@ step_supermode() {
     got="${got:+$got, }launcher → ~/.local/bin/supermode"; n=$((n + 1))
     case ":$PATH:" in
       *":$HOME_DIR/.local/bin:"*) ;;
-      *) echo "    note: ~/.local/bin is not on PATH — add it, or run ~/.local/bin/supermode by path" ;;
+      *) echo "    note: ~/.local/bin is not on PATH - add it, or run ~/.local/bin/supermode by path" ;;
     esac
   fi
   step_end supermode "$root" "$n" "$got"
@@ -652,7 +652,7 @@ step_settings() {
   elif command -v node >/dev/null 2>&1 && [ -f "$MERGER_JS" ]; then
     runner="node"; script="$MERGER_JS"
   else
-    echo "  settings: skipped (no python3 or node with a merger beside it — merge $tpl into $SETTINGS by hand)"
+    echo "  settings: skipped (no python3 or node with a merger beside it - merge $tpl into $SETTINGS by hand)"
     return 0
   fi
   bak=""
@@ -679,7 +679,7 @@ step_claude_global() {
 # of a memory layer, so this is an overlay slot: a personal root that carries
 # claude-setup/config/statusline-command.sh gets it installed, and a root that
 # does not simply reports `skipped`. The settings template no longer names a
-# statusLine key either — the two must travel together or you get the bug this
+# statusLine key either - the two must travel together or you get the bug this
 # framework shipped for a while, where every session ran a statusline command
 # that did not exist. A personal root that wants one ships both: the script
 # here, and the statusLine key in its own settings.json, merged after this one.
@@ -767,7 +767,7 @@ if [ -n "$MEMORY_REPO" ]; then
   elif [ -f "$MEMORY_REPO/$mem_dir/MEMORY.md" ]; then
     echo "  injected file: $mem_dir/MEMORY.md  (MEMORY_FILE $mem_file not found; using the index)"
   else
-    echo "  injected file: none yet — create $mem_file in the repo and the hook picks it up next session"
+    echo "  injected file: none yet - create $mem_file in the repo and the hook picks it up next session"
   fi
   echo "  memory tree:   $mem_dir  (the SessionEnd hook commits only this path)"
   echo "  optional config: $MEMORY_REPO/claude-setup/config/sunstone.conf"

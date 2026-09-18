@@ -1,13 +1,13 @@
 #!/bin/sh
-# supermode — launch Claude Code for unattended work.
+# supermode - launch Claude Code for unattended work.
 #
 # Same Claude Code, three things layered on for this session only:
 #   SUPERMODE=1                    the context guard is live (inert otherwise), and a
 #                                  successor session inherits the flag
 #   --settings supermode.settings  auto-compaction off, guard hook on, status line
 #                                  fronted by the gauge (see that file's $comment)
-#   /supermode                     the working procedure — slice, gate, commit,
-#                                  handoff, successor — is a command; the session
+#   /supermode                     the working procedure - slice, gate, commit,
+#                                  handoff, successor - is a command; the session
 #                                  runs it on the first prompt
 #
 # Every argument is passed through to `claude`, so `supermode --bg --permission-mode
@@ -18,7 +18,7 @@ cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 case "$cfg" in "~"*) cfg="$HOME${cfg#\~}";; esac
 settings="$cfg/supermode.settings.json"
 if [ ! -f "$settings" ]; then
-  echo "supermode: $settings is missing — run sunstone's setup.sh (or copy claude-setup/config/supermode.settings.json there)" >&2
+  echo "supermode: $settings is missing - run sunstone's setup.sh (or copy claude-setup/config/supermode.settings.json there)" >&2
   exit 1
 fi
 command -v claude >/dev/null 2>&1 || { echo "supermode: claude is not on PATH" >&2; exit 1; }

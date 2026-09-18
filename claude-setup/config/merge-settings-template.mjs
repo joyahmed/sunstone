@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// merge-settings-template.mjs — idempotently merge a settings.json *template*
+// merge-settings-template.mjs - idempotently merge a settings.json *template*
 // into a Claude Code settings.json. Node port of merge-settings-template.py;
 // the two apply exactly the same rules.
 //
@@ -8,7 +8,7 @@
 // - "hooks": for each event in the template, append every entry whose command
 //   is not already registered under that event. "Already registered" means an
 //   entry there runs the same command string, or the same script judged by the
-//   script file's basename — `node ~/.claude/hooks/x.js` and
+//   script file's basename - `node ~/.claude/hooks/x.js` and
 //   `node C:/dotfiles/hooks/x.js` count as one hook (the rule
 //   merge-ai-memory-hook.py / merge-claude-settings.mjs use). A template
 //   group's "matcher" (and any other keys on the group) is kept on the group
@@ -101,7 +101,7 @@ if (isObj(tpl.hooks)) {
       const { hooks: _drop, ...rest } = group;
       arr.push({ ...rest, hooks: missing });
       for (const h of missing) {
-        changes.push(`registered ${event} hook: ${h.command.slice(0, 60)}${h.command.length > 60 ? "…" : ""}`);
+        changes.push(`registered ${event} hook: ${h.command.slice(0, 60)}${h.command.length > 60 ? "..." : ""}`);
       }
     }
     if (arr.length) hooks[event] = arr;

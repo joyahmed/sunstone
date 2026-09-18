@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# OPTIONAL Claude Code extras installer — lays down the pieces beyond the
+# OPTIONAL Claude Code extras installer - lays down the pieces beyond the
 # memory layer: the statusline, skills, agents, Codex / OpenCode configs,
 # slash commands, subagents, hook scripts, a global CLAUDE.md and the
 # settings.json template (merged, never copied over yours).
@@ -8,7 +8,7 @@
 # It reads TWO install roots, in this order, with identical rules for both:
 #   1. the framework checkout this script lives in;
 #   2. the personal memory repo recorded in ~/.claude/ai-memory-path (or
-#      ~/.ai-memory), when it carries the same relative layout — the overlay.
+#      ~/.ai-memory), when it carries the same relative layout - the overlay.
 # Whatever both roots ship, the personal copy lands last and wins. The
 # framework may ship none of the optional trees (it carries no skills, and
 # only the two supermode commands); then only the personal root contributes.
@@ -16,11 +16,11 @@
 # Run from anywhere:  bash claude-setup/install.sh [--skip-overlay]
 # Idempotent. Backs up anything it would change to *.bak.<timestamp> (an
 # identical file is left alone, so a re-run leaves no clutter).
-# Does NOT touch credentials — run `claude login` separately.
+# Does NOT touch credentials - run `claude login` separately.
 #
-# The entry point for the documented feature — the portable memory layer
+# The entry point for the documented feature - the portable memory layer
 # (personal repo → ~/.claude/ai-memory-path, the SessionStart/SessionEnd sync
-# hooks, the memory-doctor notice, the global git guards) — is setup.sh at the
+# hooks, the memory-doctor notice, the global git guards) - is setup.sh at the
 # repo root:  bash setup.sh --memory-repo <git-url-or-path>
 # setup.sh applies the same two roots itself, so after a full setup this
 # script has nothing new to do; it exists for re-applying the extras alone.
@@ -37,7 +37,7 @@ MERGER_JS="$FRAMEWORK/claude-setup/config/merge-settings-template.mjs"
 # Whether the user had a settings.json before this run. Both roots merge the
 # template, and the framework's merge CREATES the file when there was none; so
 # without this flag the personal root's merge would "back up" an intermediate
-# state the user never wrote — a .bak nobody would ever want restored, left
+# state the user never wrote - a .bak nobody would ever want restored, left
 # behind in a HOME that started clean. setup.sh keeps the same flag for the
 # same reason (there it is the hook registration that creates the file).
 SETTINGS_PREEXISTED=0
@@ -69,7 +69,7 @@ backup() {
   fi
 }
 
-# install_copy <src> <dst> — copy <src> over <dst>; a differing <dst> is
+# install_copy <src> <dst> - copy <src> over <dst>; a differing <dst> is
 # backed up first, an identical one is left alone.
 install_copy() {
   local src="$1" dst="$2"
@@ -80,13 +80,13 @@ install_copy() {
   cp "$src" "$dst"
 }
 
-# install_file <src> <dst> — install_copy, then mark <dst> executable.
+# install_file <src> <dst> - install_copy, then mark <dst> executable.
 install_file() {
   install_copy "$1" "$2"
   chmod +x "$2"
 }
 
-# read_path_file <file> — first line, TRIMMED (a path may contain spaces).
+# read_path_file <file> - first line, TRIMMED (a path may contain spaces).
 read_path_file() {
   [ -f "$1" ] || return 0
   head -n1 "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
@@ -114,7 +114,7 @@ step_done() {  # <step> <root> [detail]
   INSTALLED="${INSTALLED:+$INSTALLED, }$1"
 }
 step_skip() { echo "  $1: skipped"; }
-# step_end <step> <root> <count> <detail> — the one line every step prints.
+# step_end <step> <root> <count> <detail> - the one line every step prints.
 step_end() {
   local step="$1" root="$2" n="$3" detail="$4"
   if [ "$n" -gt 0 ]; then
@@ -128,7 +128,7 @@ step_end() {
   OVERRIDDEN=0
 }
 
-# ship <root> <rel> <dst> [x] — install <root>/<rel> at <dst> (executable with
+# ship <root> <rel> <dst> [x] - install <root>/<rel> at <dst> (executable with
 # "x") unless a LATER root ships the same <rel>: the last root wins without the
 # earlier copy landing first, which would back the file up on every run.
 # Returns 0 installed, 1 not shipped by this root, 2 overridden.
@@ -142,7 +142,7 @@ ship() {
   if [ "$mode" = "x" ]; then install_file "$root/$rel" "$dst"; else install_copy "$root/$rel" "$dst"; fi
 }
 
-# ship_dir <root> <rel-dir> <dst-dir> <glob> [x] — ship every matching regular
+# ship_dir <root> <rel-dir> <dst-dir> <glob> [x] - ship every matching regular
 # file of <root>/<rel-dir> into <dst-dir>; leaves the number installed in
 # SHIPPED (a variable, not stdout: a subshell would lose the OVERRIDDEN count).
 SHIPPED=0
@@ -156,7 +156,7 @@ ship_dir() {
 }
 
 # skills/<name>/ → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills
-# (each <name> replaced whole — a skill is a tree, not a file to diff — and a
+# (each <name> replaced whole - a skill is a tree, not a file to diff - and a
 # name the later root also ships is left to that root).
 step_skills() {
   local root="$1" n=0 d name dest
@@ -172,7 +172,7 @@ step_skills() {
       # merge would strand files that an older version of the skill shipped
       # and the new one dropped. That makes this the one step that can destroy
       # work, because an existing <name>/ here is not necessarily an earlier
-      # copy of ours — it may be a skill the user wrote by hand under the same
+      # copy of ours - it may be a skill the user wrote by hand under the same
       # name. So back it up first. Only when it DIFFERS, so re-running an
       # unchanged tree still leaves no .bak clutter, exactly like install_file.
       # This mirrors setup.sh's step_skills deliberately: the two installers
@@ -194,7 +194,7 @@ step_skills() {
 # user-level instructions from ~/.claude/CLAUDE.md; a file at the home root is
 # only picked up as a project-parent file when a project lives directly under
 # $HOME. A CLAUDE.global.md shipped by either root takes ~/.claude/CLAUDE.md
-# instead — see step_claude_global.
+# instead - see step_claude_global.
 step_agents() {
   local root="$1" got="" n=0
   if ship "$root" agents/AGENTS.md "$HOME_DIR/AGENTS.md"; then
@@ -241,7 +241,7 @@ step_commands() {
   step_end commands "$root" "$n" "$n → ~/.claude/commands"
 }
 
-# claude-setup/config/agents/*.md → ~/.claude/agents/ — nothing in Claude Code
+# claude-setup/config/agents/*.md → ~/.claude/agents/ - nothing in Claude Code
 # switches the main model on a condition, so subagent files are the mechanism
 # for "escalate this kind of work to a stronger model".
 step_subagents() {
@@ -252,7 +252,7 @@ step_subagents() {
 
 # claude-setup/config/hooks/* → ~/.claude/hooks/ (executable). Scripts are only
 # COPIED here, never registered: the framework's memory hooks are registered
-# by setup.sh, anything else — a personal hook in particular — by the
+# by setup.sh, anything else - a personal hook in particular - by the
 # settings.json of the root that ships it (step_settings).
 step_hooks() {
   local root="$1" n
@@ -273,7 +273,7 @@ step_supermode() {
     got="${got:+$got, }launcher → ~/.local/bin/supermode"; n=$((n + 1))
     case ":$PATH:" in
       *":$HOME_DIR/.local/bin:"*) ;;
-      *) echo "    note: ~/.local/bin is not on PATH — add it, or run ~/.local/bin/supermode by path" ;;
+      *) echo "    note: ~/.local/bin is not on PATH - add it, or run ~/.local/bin/supermode by path" ;;
     esac
   fi
   step_end supermode "$root" "$n" "$got"
@@ -300,7 +300,7 @@ step_settings() {
   elif command -v node >/dev/null 2>&1 && [ -f "$MERGER_JS" ]; then
     runner="node"; script="$MERGER_JS"
   else
-    echo "  settings: skipped (no python3 or node with a merger beside it — merge $tpl into $SETTINGS by hand)"
+    echo "  settings: skipped (no python3 or node with a merger beside it - merge $tpl into $SETTINGS by hand)"
     return 0
   fi
   bak=""
@@ -390,7 +390,7 @@ fi
 # ── Summary ───────────────────────────────────────
 
 # Project auto-memory lives under ~/.claude/projects/<slug>/memory/, and the
-# slug is derived from the project's REAL working-directory path — copy memory
+# slug is derived from the project's REAL working-directory path - copy memory
 # into a guessed slug and Claude never loads it. So nothing is copied there
 # from here. Durable memory is the personal repo that setup.sh records in
 # ~/.claude/ai-memory-path; the SessionStart hook injects it on every machine.
@@ -403,19 +403,19 @@ if [ -n "$OVERLAY_ROOT" ]; then
 elif [ "$SKIP_OVERLAY" = "1" ]; then
   echo "  personal:  skipped (--skip-overlay)"
 else
-  echo "  personal:  none — no personal memory repo recorded yet; run:"
+  echo "  personal:  none - no personal memory repo recorded yet; run:"
   echo "             bash $FRAMEWORK/setup.sh --memory-repo <git-url-or-path>"
 fi
 
 cat <<'NEXT'
 
 ==> DONE (files in place). Remaining MANUAL steps (see SETUP.md):
-  1. claude login                         # auth — credentials are NOT bundled
+  1. claude login                         # auth - credentials are NOT bundled
   2. Verify: jq (statusline) and node (>= 20) are on PATH
      (the settings template merger runs under python3 when present, node otherwise)
   3. Restart Claude Code
 
-  OPTIONAL — third-party plugins. Nothing installed here needs them; the
+  OPTIONAL - third-party plugins. Nothing installed here needs them; the
   CLAUDE.md rules that mention context-mode are written to be ignored when it
   is absent. Install them only if you want those tools:
      /plugin marketplace add mksglu/context-mode

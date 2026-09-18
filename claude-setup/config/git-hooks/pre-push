@@ -1,10 +1,10 @@
 #!/bin/sh
-# Global pre-push — installed via core.hooksPath, so it covers every repo on
+# Global pre-push - installed via core.hooksPath, so it covers every repo on
 # this machine, the ones that already exist and any cloned later.
 #
 # PURPOSE: the framework repo and the personal memory repo are written by
 # SEVERAL assistant sessions at once. A history rewrite there does not just
-# inconvenience one clone — it strands whatever another live session has
+# inconvenience one clone - it strands whatever another live session has
 # already committed. This hook refuses any push that would
 # rewrite or delete remote history in the guarded repos. Every other repo is
 # untouched. The framework protects itself: a remote whose basename is
@@ -17,7 +17,7 @@
 # $HOME/.ai-memory when that file is missing and the directory is a git repo).
 # Default when the key is absent: "sunstone <basename of the personal repo's
 # origin URL>". When no personal repo can be found at all, the list is just
-# "sunstone" — the guard never silently vanishes on a half-set-up machine.
+# "sunstone" - the guard never silently vanishes on a half-set-up machine.
 #
 # ⚠️ Git does NOT tell a pre-push hook whether --force was passed. There is no
 # flag to read. So we detect the EFFECT instead: a push is a rewrite when the
@@ -52,7 +52,7 @@ fi
 CONF=""
 [ -n "$PERSONAL" ] && CONF="$PERSONAL/claude-setup/config/sunstone.conf"
 
-# conf_get KEY DEFAULT — POSIX KEY=VALUE lines. The parsing rule is the
+# conf_get KEY DEFAULT - POSIX KEY=VALUE lines. The parsing rule is the
 # framework's and every reader of sunstone.conf shares it:
 # '#' starts a comment only at line start or after whitespace (so "a#b" is the
 # value a#b, "#b" is the value #b, while "a #b" is the value a); a value may be
@@ -83,20 +83,20 @@ conf_get() {
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
 }
 
-# ⚠️ The built-in default is "sunstone" plus ONE more name — the personal repo's
-# — and a repo name may contain a space (a checkout at ".../my notes", or an
+# ⚠️ The built-in default is "sunstone" plus ONE more name - the personal repo's
+# - and a repo name may contain a space (a checkout at ".../my notes", or an
 # origin URL with one). Folding that name into the space-separated list would
 # word-split it, which silently leaves the memory repo UNGUARDED while guarding
 # every unrelated repo whose name matches a fragment of it. So the default is
 # built by comparing each part whole, and only a list the user wrote
-# deliberately is word-split — which also keeps an explicit GUARDED_REPOS able
+# deliberately is word-split - which also keeps an explicit GUARDED_REPOS able
 # to drop "sunstone", exactly as the docs promise.
 GUARDED_REPOS=$(conf_get GUARDED_REPOS "")
 
 GUARDED=0
 if [ -z "$GUARDED_REPOS" ]; then
 	# The framework guards itself even on a machine with no personal repo and so
-	# no config at all — the guard never silently vanishes on a half-set-up box.
+	# no config at all - the guard never silently vanishes on a half-set-up box.
 	[ "$REPO" = "sunstone" ] && GUARDED=1
 	if [ -n "$PERSONAL" ] && [ -n "$REPO" ] && [ "$(repo_name_of "$PERSONAL")" = "$REPO" ]; then
 		GUARDED=1
@@ -114,10 +114,10 @@ cat > "$STDIN_COPY"
 trap 'rm -f "$STDIN_COPY"' EXIT
 
 if [ "$GUARDED" = "1" ]; then
-	# Escape hatch. A guard with no way out gets deleted rather than obeyed —
+	# Escape hatch. A guard with no way out gets deleted rather than obeyed -
 	# this makes overriding deliberate and visible instead of impossible.
 	if [ -n "$ALLOW_FORCE_PUSH" ]; then
-		printf '⚠️  pre-push: ALLOW_FORCE_PUSH set — history rewrite permitted on %s\n' "$REPO" >&2
+		printf '⚠️  pre-push: ALLOW_FORCE_PUSH set - history rewrite permitted on %s\n' "$REPO" >&2
 	else
 		ZERO='^0*$'
 		BLOCKED=0
@@ -132,12 +132,12 @@ if [ "$GUARDED" = "1" ]; then
 				continue
 			fi
 
-			# Brand-new branch — nothing on the remote to rewrite.
+			# Brand-new branch - nothing on the remote to rewrite.
 			printf '%s' "$REMOTE_SHA" | grep -qE "$ZERO" && continue
 
 			# Cannot judge what we do not have. Rare, and safer to stop than guess.
 			if ! git cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null; then
-				printf '⛔ pre-push: %s is unknown locally — run `git fetch` before pushing to %s\n' "$REMOTE_SHA" "$REPO" >&2
+				printf '⛔ pre-push: %s is unknown locally - run `git fetch` before pushing to %s\n' "$REMOTE_SHA" "$REPO" >&2
 				BLOCKED=1
 				continue
 			fi
@@ -163,7 +163,7 @@ fi
 
 # ⛔ core.hooksPath makes git IGNORE $GIT_DIR/hooks entirely, so a repo that
 # installs its own hook there would be silently disabled. Chain to it instead.
-# Resolve with --git-dir, never `--git-path hooks` — that OBEYS core.hooksPath
+# Resolve with --git-dir, never `--git-path hooks` - that OBEYS core.hooksPath
 # and returns this directory, so the hook execs itself and hangs every push.
 GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || exit 0
 LOCAL="$GIT_DIR_PATH/hooks/pre-push"

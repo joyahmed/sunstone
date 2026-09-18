@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-memory-sync.js — SessionStart hook (Windows port of ai-memory-sync.sh).
+// ai-memory-sync.js - SessionStart hook (Windows port of ai-memory-sync.sh).
 // 1. Locates the user's memory repo (portable via ~/.claude/ai-memory-path).
 // 2. Best-effort ff-only pull (timed out, offline-safe) so the memory is fresh.
 // 3. Injects the memory file (MEMORY_FILE, default claude-setup/memory/ABOUT-ME.md)
@@ -45,7 +45,7 @@ function readConf(repo) {
       val = val.replace(/\s#.*$/, "").trim();
     }
     // Last matching line wins; an empty value un-sets the key so the caller's
-    // default applies — exactly what conf_get in the .sh twin does.
+    // default applies - exactly what conf_get in the .sh twin does.
     if (val) conf[key] = val;
     else delete conf[key];
   }
@@ -57,7 +57,7 @@ function main() {
   const pathFile = path.join(home, ".claude", "ai-memory-path");
 
   // The single line in ~/.claude/ai-memory-path names the clone. With no path
-  // file there is one generic fallback, $HOME/.ai-memory — used if it is a git
+  // file there is one generic fallback, $HOME/.ai-memory - used if it is a git
   // repo, otherwise there is nothing to do. Same order as ai-memory-sync.sh,
   // so the two ports cannot disagree about which checkout they mean.
   const candidates = [];
@@ -105,8 +105,8 @@ function main() {
   // CANNOT integrate divergence, and with several machines and clients (a WSL
   // shell, a desktop app, a cloud session) all committing to the memory tree,
   // divergence is the normal case rather than the exception. Left at ff-only
-  // alone, a machine that falls behind fails to pull, then fails to push, and —
-  // every failure here being silent — simply stops syncing forever without
+  // alone, a machine that falls behind fails to pull, then fails to push, and -
+  // every failure here being silent - simply stops syncing forever without
   // saying so.
   //
   // So on failure, rebase our memory commits on top instead. Rewriting local
@@ -128,13 +128,13 @@ function main() {
 
   // --- push what last session committed ------------------------------------
   // The SessionEnd hook (ai-memory-commit.js) commits memory writes but never
-  // pushes, so the network cost lands here instead — where a round trip is
+  // pushes, so the network cost lands here instead - where a round trip is
   // already being paid. Nothing to push is the common case and costs one local
   // rev-list.
   //
   // One retry: a push can be rejected by a commit that landed between our pull
   // and our push, and re-syncing then pushing again clears exactly that case.
-  // If the retry also fails the commits stay local and go out next session —
+  // If the retry also fails the commits stay local and go out next session -
   // which is now genuinely "next time" rather than "never".
   if (count("@{u}..HEAD") > 0) {
     try {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ctx-gauge — the context gauge for supermode. Pure Node.js, no shell dependency.
+// ctx-gauge - the context gauge for supermode. Pure Node.js, no shell dependency.
 //
 // Claude Code tells the STATUS LINE how full the context window is
 // (`context_window.used_percentage`) and tells HOOKS nothing of the kind. The model

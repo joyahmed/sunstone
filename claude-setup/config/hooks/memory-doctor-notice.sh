@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# memory-doctor-notice.sh — SessionStart hook.
+# memory-doctor-notice.sh - SessionStart hook.
 #
 # Nobody runs memory-doctor by hand. A maintenance chore that depends on a
-# person remembering it is a chore that never happens — so the system raises
+# person remembering it is a chore that never happens - so the system raises
 # it instead.
 #
 # Runs the doctor in --brief mode and injects at most ONE line of context. It is
@@ -12,7 +12,7 @@
 #     wallpaper;
 #   - at most one notice per THROTTLE_HOURS, so it does not repeat inside a day
 #     of back-to-back sessions;
-#   - every failure mode is silent — no framework checkout, no node, no
+#   - every failure mode is silent - no framework checkout, no node, no
 #     network: the session starts clean, just without the notice.
 #
 # Disable with:  touch ~/.claude/.memory-doctor-off
@@ -37,15 +37,15 @@ fi
 # repo, and this hook is COPIED to ~/.claude/hooks/ by setup, so its own
 # location normally says nothing. The doctor also resolves the framework from
 # its own __dirname (for the wiring check), so it cannot simply be copied next
-# to this hook — the framework checkout has to be found. Resolution order:
-#   1. ~/.claude/sunstone-path — one line, the framework clone. setup.sh
+# to this hook - the framework checkout has to be found. Resolution order:
+#   1. ~/.claude/sunstone-path - one line, the framework clone. setup.sh
 #      should write this; it is the only route that survives every layout.
 #   2. this hook's own location, symlinks resolved, for a checkout that runs
 #      the hook in place (<framework>/claude-setup/config/hooks/ → <framework>).
 #   3. the memory repo from ~/.claude/ai-memory-path (or $HOME/.ai-memory):
 #      first the repo itself, for the layout where the memory repo is a
 #      framework checkout. Then, as a pure convenience guess, a sibling
-#      directory named sunstone — for users who keep their clones side by
+#      directory named sunstone - for users who keep their clones side by
 #      side. setup.sh does NOT create that layout (it clones the memory repo
 #      into ~/.ai-memory by default), so nothing relies on this guess.
 # Every candidate is verified by the presence of memory-doctor.js; a wrong
@@ -93,8 +93,8 @@ EOC
 # it wrong: it yields the LEXICALLY first install, i.e. the oldest-sorting one,
 # which on a machine that keeps several nvm versions is rarely the one the user
 # runs and may be a half-removed install that no longer executes. When that
-# happens the doctor produces nothing, the hook says nothing, and — no notice
-# means no stamp — it repeats every single session. So ask nvm which version it
+# happens the doctor produces nothing, the hook says nothing, and - no notice
+# means no stamp - it repeats every single session. So ask nvm which version it
 # considers the default, then take the newest, and only fall back to the raw
 # glob (for a `sort` without -V) once the system paths have had their turn.
 NVM_ROOT="${NVM_DIR:-$HOME/.nvm}"
@@ -112,7 +112,7 @@ case "${alias_val:-}" in
   v[0-9]*|[0-9]*) NVM_DEFAULT="$NVM_ROOT/versions/node/v${alias_val#v}/bin/node" ;;
 esac
 # printf, not `ls`: the glob is already expanded by the shell, and with no
-# match printf echoes the pattern unchanged — which then fails the -x test
+# match printf echoes the pattern unchanged - which then fails the -x test
 # below like any other miss. A `sort` without -V leaves this empty, and the
 # raw glob at the end of the list still covers that machine.
 NVM_NEWEST="$(printf '%s\n' "$NVM_ROOT/versions/node/"*/bin/node 2>/dev/null | sort -V 2>/dev/null | tail -n1)"
@@ -128,7 +128,7 @@ done
 
 # --- ask the doctor for one line ------------------------------------------
 LINE="$("$NODE" "$FRAMEWORK/$DOCTOR_REL" --brief 2>/dev/null)"
-[ -z "$LINE" ] && exit 0   # drained and healthy — say nothing, record nothing
+[ -z "$LINE" ] && exit 0   # drained and healthy - say nothing, record nothing
 
 date +%s > "$STAMP" 2>/dev/null || true
 

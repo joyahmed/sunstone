@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 /**
- * memory-doctor.js — verify this machine's Claude memory system.
+ * memory-doctor.js - verify this machine's Claude memory system.
  *
  * Everything in the memory stack fails SILENTLY by design: the SessionStart
  * sync hook (ai-memory-sync.sh, or its .js port on Windows) swallows every
  * error so a dead network never blocks a session, and the SessionEnd commit
  * hook does the same. That is right for a session and wrong
- * for a month — a machine can stop syncing, or a memory can be written into
+ * for a month - a machine can stop syncing, or a memory can be written into
  * the wrong tier, and nothing ever says so.
  *
  * This is the thing that says so. Read-only: it never writes, moves, commits
  * or deletes anything. It reports, and you decide.
  *
  * Three tiers are checked:
- *   synced   — the personal memory repo named in ~/.claude/ai-memory-path
+ *   synced   - the personal memory repo named in ~/.claude/ai-memory-path
  *              (or $HOME/.ai-memory when that file is absent), under MEMORY_DIR
- *   working  — ~/.claude/projects/<slug>/memory/, machine-local, syncs nowhere
- *   repo     — <project>/docs/ai-memory/ inside each project Claude has opened
+ *   working  - ~/.claude/projects/<slug>/memory/, machine-local, syncs nowhere
+ *   repo     - <project>/docs/ai-memory/ inside each project Claude has opened
  *
  * Layout is read from <personal-repo>/claude-setup/config/sunstone.conf when it
  * exists (KEY=VALUE lines); every key has a default, so the file is optional:
@@ -57,10 +57,10 @@ const { execFileSync } = require('child_process');
 const argv = process.argv.slice(2);
 const OPT = {
   json: argv.includes('--json'),
-  // --brief prints a few lines for the SessionStart hook — one summary line
-  // plus at most three WARN lines (hook drift, unindexed files) — and prints
+  // --brief prints a few lines for the SessionStart hook - one summary line
+  // plus at most three WARN lines (hook drift, unindexed files) - and prints
   // nothing at all when there is nothing worth saying. Nobody runs a doctor by
-  // hand on a schedule, and nobody should have to remember to — the hook
+  // hand on a schedule, and nobody should have to remember to - the hook
   // raises it, and goes quiet for good once the stores are drained.
   brief: argv.includes('--brief'),
   verbose: argv.includes('--verbose') || argv.includes('-v'),
@@ -72,7 +72,7 @@ const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 
-/** The framework checkout this script lives in — where the hook sources are. */
+/** The framework checkout this script lives in - where the hook sources are. */
 const FRAMEWORK_DIR = path.resolve(__dirname, '..', '..');
 
 /** The setup entry point for this platform, named in every "fix it" hint. */
@@ -81,7 +81,7 @@ const REINSTALL = process.platform === 'win32' ? 'setup.ps1' : 'setup.sh';
 /** Where the optional layout file lives, relative to the personal repo. */
 const CONF_SUBPATH = path.join('claude-setup', 'config', 'sunstone.conf');
 
-/** Defaults for every layout key — the conf file may be absent entirely. */
+/** Defaults for every layout key - the conf file may be absent entirely. */
 const CONF_DEFAULTS = {
   MEMORY_DIR: 'claude-setup/memory',
   MEMORY_FILE: 'claude-setup/memory/ABOUT-ME.md',
@@ -93,7 +93,7 @@ const CONF_DEFAULTS = {
   // Read here ONLY to diagnose. The two git guards (pre-commit, pre-push) are
   // the components that act on these; memory-doctor never enforces them. It
   // reads them because a guard that silently stops guarding is the one failure
-  // in this system with no other symptom — see the check below.
+  // in this system with no other symptom - see the check below.
   MEMORY_REPOS: '',
   GUARDED_REPOS: '',
 };
@@ -103,11 +103,11 @@ const CONF_PATH_KEYS = ['MEMORY_DIR', 'MEMORY_FILE', 'MEMORY_INDEX'];
 
 /**
  * Parse `KEY=VALUE` lines. Whitespace around '=' is accepted (`KEY = value`
- * reads the same as `KEY=value`) — the rule all nine readers share. Values may
+ * reads the same as `KEY=value`) - the rule all nine readers share. Values may
  * be double-quoted,
  * '#' starts a comment only at line start or after whitespace. Surrounding
  * quotes are stripped and whitespace is trimmed (never deleted from inside a
- * value — a path may contain spaces). The file is user content, so it is
+ * value - a path may contain spaces). The file is user content, so it is
  * parsed, never evaluated. Unknown keys are ignored; known keys with empty
  * values keep the default.
  */
@@ -125,12 +125,12 @@ function parseConf(text) {
     const m = /^([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(.*)$/.exec(line);
     if (!m) continue;
     // Leading whitespace is kept until the comment rule has run: KEY=#x is
-    // the value "#x", KEY= #x is a comment (empty → default) — the same rule
+    // the value "#x", KEY= #x is a comment (empty → default) - the same rule
     // the .sh and .js hooks apply.
     let v = m[2];
     if (v.trimStart().startsWith('"')) {
       // A quoted value ends at its closing quote (contents kept verbatim);
-      // whatever follows — a trailing comment — is ignored. An unterminated
+      // whatever follows - a trailing comment - is ignored. An unterminated
       // quote takes the rest of the line.
       v = v.trimStart();
       const end = v.indexOf('"', 1);
@@ -226,7 +226,7 @@ function frontmatter(text) {
 /**
  * Every markdown link target ending in .md, with the line it came from.
  *
- * `entry` marks a link that is an actual index entry — a `- [Title](file.md)`
+ * `entry` marks a link that is an actual index entry - a `- [Title](file.md)`
  * list item. A link in prose ("see [x.md](x.md) for detail") is a
  * cross-reference and may legitimately repeat; two list items for one file is
  * the store indexed twice.
@@ -236,7 +236,7 @@ function mdLinks(text) {
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     // Only the FIRST link on a list item is that item's entry. Anything after
-    // it is prose inside the entry's own description ("- [a](a.md) — start
+    // it is prose inside the entry's own description ("- [a](a.md) - start
     // from [b](b.md)"), which is a cross-reference like any other and must not
     // be counted as a second index line for b.md.
     const isListItem = /^\s*[-*]\s/.test(lines[i]);
@@ -294,11 +294,11 @@ function resolveRepo() {
 
   if (recorded) {
     error('wiring', `ai-memory-path points at ${recorded}, which is not a git checkout. ` +
-      'The hooks do nothing until it names the personal memory repo — run setup.sh.');
+      'The hooks do nothing until it names the personal memory repo - run setup.sh.');
   } else {
     // Same rule as the hooks: no path file means "try $HOME/.ai-memory, else
     // do nothing". The hooks stay silent about it; the doctor does not.
-    error('wiring', '~/.claude/ai-memory-path is missing — the hooks only have the ' +
+    error('wiring', '~/.claude/ai-memory-path is missing - the hooks only have the ' +
       `${fallback} fallback to go on. Run setup.sh.`);
   }
 
@@ -308,7 +308,7 @@ function resolveRepo() {
 const REPO = resolveRepo();
 if (!REPO) {
   error('wiring', 'No personal memory repo found. The portable memory is not installed ' +
-    'on this machine — clone your memory repo and run setup.sh.');
+    'on this machine - clone your memory repo and run setup.sh.');
   report();
   process.exit(1);
 }
@@ -319,7 +319,7 @@ STORE_META = new Set([
   'README.md',
   path.basename(CONF.MEMORY_INDEX), path.basename(CONF.MEMORY_FILE),
   // MEMORY_FILE falls back to MEMORY.md inside MEMORY_DIR, so that file is
-  // structure too — but ONLY while the fallback is live. Under a layout that
+  // structure too - but ONLY while the fallback is live. Under a layout that
   // names its index something else and has a real MEMORY_FILE, a file called
   // MEMORY.md is an ordinary memory and must be counted and checked like one;
   // hardcoding the basename silently swallowed it.
@@ -343,14 +343,14 @@ STORE_META = new Set([
 //
 // MEMORY_REPOS (pre-commit) and GUARDED_REPOS (pre-push) name repos by BARE
 // BASENAME, matched whole. Both are space-separated, so an entry containing a
-// space cannot be expressed — that is inherent to the format, not a bug, and
+// space cannot be expressed - that is inherent to the format, not a bug, and
 // changing it would mean one list grammar kept byte-identical across nine
 // readers in five languages.
 //
 // ⚠️ What makes it worth a check anyway is the DIRECTION it fails in. A guard
 // that cannot match its repo does not error; it goes quiet, on exactly the
 // repo the user believed was protected. Every other misconfiguration in this
-// system announces itself — a wrong MEMORY_DIR yields an empty tree, a bad
+// system announces itself - a wrong MEMORY_DIR yields an empty tree, a bad
 // path file yields a missing repo. This one is silent, so the doctor is the
 // only place it can surface.
 {
@@ -376,7 +376,7 @@ STORE_META = new Set([
     // protect. If the list is set and omits it, the guard cannot ever fire.
     if (!entries.includes(repoName)) {
       warn('wiring', `${key} is set but does not list "${repoName}", the repo this check is ` +
-        `auditing — so the ${key === 'MEMORY_REPOS' ? 'pre-commit mixed-staging guard' : 'pre-push history guard'} ` +
+        `auditing - so the ${key === 'MEMORY_REPOS' ? 'pre-commit mixed-staging guard' : 'pre-push history guard'} ` +
         'never fires on your own memory repo. Add it, or clear the key to fall back to the ' +
         `derived default. Currently listed: ${entries.join(' ')}`);
     }
@@ -391,15 +391,15 @@ stats.conf = exists(path.join(REPO, CONF_SUBPATH)) ? path.join(REPO, CONF_SUBPAT
 
 if (!isDir(SYNCED)) {
   error('wiring', `${MEM_SUBPATH}/ does not exist in ${REPO}. Nothing can be synced ` +
-    'from a memory tree that is not there — check MEMORY_DIR in sunstone.conf.');
+    'from a memory tree that is not there - check MEMORY_DIR in sunstone.conf.');
 }
 if (!exists(path.join(REPO, CONF.MEMORY_FILE)) && !exists(path.join(SYNCED, 'MEMORY.md'))) {
-  warn('wiring', `Neither ${CONF.MEMORY_FILE} nor ${MEM_SUBPATH}/MEMORY.md exists — the ` +
+  warn('wiring', `Neither ${CONF.MEMORY_FILE} nor ${MEM_SUBPATH}/MEMORY.md exists - the ` +
     'SessionStart hook has nothing to inject, so every session starts without memory.');
 }
 
 // ---------------------------------------------------------------------------
-// 2. hook wiring — is the machine actually running the system?
+// 2. hook wiring - is the machine actually running the system?
 // ---------------------------------------------------------------------------
 
 function checkHooks() {
@@ -423,10 +423,10 @@ function checkHooks() {
   const settingsPath = path.join(CLAUDE_DIR, 'settings.json');
   const raw = read(settingsPath);
   if (raw === null) {
-    error('wiring', '~/.claude/settings.json is missing — no hooks are registered.');
+    error('wiring', '~/.claude/settings.json is missing - no hooks are registered.');
   } else {
     try { settings = JSON.parse(raw); }
-    catch (e) { error('wiring', `~/.claude/settings.json is not valid JSON (${e.message}) — ` +
+    catch (e) { error('wiring', `~/.claude/settings.json is not valid JSON (${e.message}) - ` +
       'Claude Code silently ignores it, so every hook is off.'); }
   }
 
@@ -442,7 +442,7 @@ function checkHooks() {
     const present = PORTS.map((ext) => name + ext)
       .filter((file) => exists(path.join(installedDir, file)));
     if (present.length === 0) {
-      error('wiring', `~/.claude/hooks/${name}.sh (or ${name}.js) is missing — ${what} never runs. ` +
+      error('wiring', `~/.claude/hooks/${name}.sh (or ${name}.js) is missing - ${what} never runs. ` +
         `Run ${reinstall} to reinstall.`);
       continue;
     }
@@ -450,14 +450,14 @@ function checkHooks() {
     const reg = registered(event);
     if (!present.some((file) => reg.includes(file))) {
       error('wiring', `${present.join(' / ')} exists but is NOT registered under ${event} in ` +
-        `settings.json — it is installed and dead. ${what} never runs.`);
+        `settings.json - it is installed and dead. ${what} never runs.`);
     }
 
     for (const file of present) {
       const src = path.join(sourceDir, file);
       if (!exists(src)) continue;
       if (read(src) !== read(path.join(installedDir, file))) {
-        warn('wiring', `~/.claude/hooks/${file} differs from the framework copy — this machine ` +
+        warn('wiring', `~/.claude/hooks/${file} differs from the framework copy - this machine ` +
           'is running an older hook, or a local edit that was never committed back. ' +
           `Rerun ${reinstall} to refresh it.`, [showPath(src)]);
       }
@@ -466,14 +466,14 @@ function checkHooks() {
     // A .sh port on Windows only runs if a bash is on PATH; setup.ps1 installs
     // the .js port precisely to avoid that. Flag the case rather than assume.
     if (process.platform === 'win32' && !present.includes(name + '.js')) {
-      info('wiring', `Windows: ~/.claude/hooks/${name}.sh is a bash script — it needs Git Bash ` +
+      info('wiring', `Windows: ~/.claude/hooks/${name}.sh is a bash script - it needs Git Bash ` +
         `or WSL on PATH, or it no-ops silently. setup.ps1 installs ${name}.js instead.`);
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// 3. sync health — the "stopped syncing forever" failure
+// 3. sync health - the "stopped syncing forever" failure
 // ---------------------------------------------------------------------------
 
 function checkSync() {
@@ -482,7 +482,7 @@ function checkSync() {
   stats.branch = branch;
 
   if (!upstream) {
-    error('sync', `Branch ${branch || '?'} has no upstream — every pull and push in the ` +
+    error('sync', `Branch ${branch || '?'} has no upstream - every pull and push in the ` +
       'hooks fails silently, so this machine\'s memory writes never leave it.');
     return;
   }
@@ -498,7 +498,7 @@ function checkSync() {
         'pushes on a best-effort basis; this many means it has been failing for a while.');
     }
     if (behind > 50) {
-      warn('sync', `${behind} commits behind ${upstream} — another machine has been writing ` +
+      warn('sync', `${behind} commits behind ${upstream} - another machine has been writing ` +
         'memory this one has not seen.');
     }
   }
@@ -506,7 +506,7 @@ function checkSync() {
   // Uncommitted memory writes: the SessionEnd hook should have taken these.
   const dirty = git(REPO, ['status', '--porcelain', '--', MEM_SUBPATH]);
   if (dirty) {
-    // Porcelain is `XY <path>`, but git() trims the output — which eats the
+    // Porcelain is `XY <path>`, but git() trims the output - which eats the
     // leading space of an unstaged-only first line. Strip the status field by
     // pattern rather than by offset.
     const files = dirty.split('\n')
@@ -523,7 +523,7 @@ function checkSync() {
     for (const marker of ['MERGE_HEAD', 'REBASE_HEAD', 'rebase-merge', 'rebase-apply']) {
       if (exists(path.join(abs, marker))) {
         error('sync', `The repo is mid-${marker.toLowerCase().includes('rebase') ? 'rebase' : 'merge'} ` +
-          `(${marker}). Both memory hooks bail out in this state — memory is not being saved ` +
+          `(${marker}). Both memory hooks bail out in this state - memory is not being saved ` +
           'until you finish or abort it.');
         break;
       }
@@ -532,7 +532,7 @@ function checkSync() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. index parity — MEMORY.md vs the files on disk
+// 4. index parity - MEMORY.md vs the files on disk
 // ---------------------------------------------------------------------------
 
 function checkIndex() {
@@ -545,7 +545,7 @@ function checkIndex() {
     exists(path.join(SYNCED, 'MEMORY.md'));
 
   if (indexText === null) {
-    error('index', `${INDEX_REL} is missing — nothing indexes the store.`);
+    error('index', `${INDEX_REL} is missing - nothing indexes the store.`);
     return { files, linked: new Set() };
   }
 
@@ -576,7 +576,7 @@ function checkIndex() {
 
   if (dangling.length) {
     error('index', `${dangling.length} ${path.basename(INDEX_PATH)} link(s) point at files that do not exist. ` +
-      'The index is the only thing loaded every session — a dead link is a memory Claude ' +
+      'The index is the only thing loaded every session - a dead link is a memory Claude ' +
       'believes it has and cannot open.', dangling);
   }
   if (dupes.length) {
@@ -593,7 +593,7 @@ function checkIndex() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. file hygiene — frontmatter, name/filename agreement, wikilinks
+// 5. file hygiene - frontmatter, name/filename agreement, wikilinks
 // ---------------------------------------------------------------------------
 
 function checkFiles(files) {
@@ -632,11 +632,11 @@ function checkFiles(files) {
 
   if (nameMismatch.length) {
     warn('hygiene', `${nameMismatch.length} file(s) whose frontmatter name does not match ` +
-      'the filename — [[wikilinks]] and recall both key off the name.', nameMismatch);
+      'the filename - [[wikilinks]] and recall both key off the name.', nameMismatch);
   }
   if (noFm.length) {
-    info('hygiene', `${noFm.length} file(s) have no frontmatter. Not fatal — they still read ` +
-      'fine — but they carry no description for relevance matching.', noFm);
+    info('hygiene', `${noFm.length} file(s) have no frontmatter. Not fatal - they still read ` +
+      'fine - but they carry no description for relevance matching.', noFm);
   }
   if (noDesc.length) {
     info('hygiene', `${noDesc.length} file(s) have frontmatter but no description:`, noDesc);
@@ -650,13 +650,13 @@ function checkFiles(files) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. the working tier — is it drained?
+// 6. the working tier - is it drained?
 // ---------------------------------------------------------------------------
 
 /**
  * Map a Claude project slug back to the directory it stands for.
  *
- * The slug is lossy — '/', '.', '_' and '-' all become '-' — so it cannot be
+ * The slug is lossy - '/', '.', '_' and '-' all become '-' - so it cannot be
  * decoded by string work alone. Instead the slug is matched against the real
  * filesystem: starting from $HOME (then the filesystem root), each directory
  * entry whose own slug is a prefix of what remains is descended into, until
@@ -691,7 +691,7 @@ const isUnder = (root, dir) => {
  * PROJECT_ROOTS fallback: a slug the walk from $HOME could not decode (a
  * project on another drive, behind a symlink, or under a directory that is
  * not readable from the top) is matched against the immediate children of
- * each configured root — as the child itself, or as a subfolder of it.
+ * each configured root - as the child itself, or as a subfolder of it.
  */
 function resolveSlugFromRoots(slug) {
   for (const root of PROJECT_ROOTS) {
@@ -752,7 +752,7 @@ const showPath = (p) => {
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : p;
 };
 
-/** Project directories the working tier stands for — feeds the repo-store scan. */
+/** Project directories the working tier stands for - feeds the repo-store scan. */
 const projectDirs = new Set();
 
 function checkWorkingTier() {
@@ -774,14 +774,14 @@ function checkWorkingTier() {
     if (target && target !== HOME) projectDirs.add(target);
     // A session opened in a subfolder still promotes to the repo root's store.
     // Under a configured PROJECT_ROOT the project is the root's immediate
-    // child — which also covers a project that is not (yet) a git repo.
+    // child - which also covers a project that is not (yet) a git repo.
     const rooted = target && target !== HOME ? projectFromRoots(target) : null;
     const top = !rooted && target && target !== HOME
       ? git(target, ['rev-parse', '--show-toplevel']) : null;
     const project = rooted || (top ? path.resolve(top) : target);
     if (rooted) projectDirs.add(rooted);
     // A session opened at $HOME (or inside the memory repo itself) has no
-    // project to promote to — its facts belong in the synced tier.
+    // project to promote to - its facts belong in the synced tier.
     const home = !project || project === HOME || insideRepo(project)
       ? `${path.basename(REPO)}/${MEM_SUBPATH.split(path.sep).join('/')}/`
       : `${showPath(project)}/docs/ai-memory/`;
@@ -823,14 +823,14 @@ function checkWorkingTier() {
       .map((u) => `${String(u.count).padStart(3)} file(s)  ${u.slug}\n            -> promote to ${u.home}`);
     warn('working-tier', `${total} memory file(s) sit undrained in ` +
       `${undrained.length} machine-local project store(s). ` +
-      '~/.claude/projects/<slug>/memory/ syncs NOWHERE — a machine wipe takes all of it. ' +
+      '~/.claude/projects/<slug>/memory/ syncs NOWHERE - a machine wipe takes all of it. ' +
       'CLAUDE.md calls this a working tier: write there during a session, then promote and delete.',
       lines);
   }
 
   if (danglingIndex.length) {
     warn('working-tier', `${danglingIndex.length} working-tier MEMORY.md link(s) point at ` +
-      'files that no longer exist — usually a memory that was promoted but left in the index.',
+      'files that no longer exist - usually a memory that was promoted but left in the index.',
       danglingIndex);
   }
 
@@ -838,7 +838,7 @@ function checkWorkingTier() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. in-repo project memory — written but never committed dies the same death
+// 7. in-repo project memory - written but never committed dies the same death
 // ---------------------------------------------------------------------------
 
 function checkRepoStores() {
@@ -846,7 +846,7 @@ function checkRepoStores() {
   const found = [];
 
   // Which projects have an in-repo store? The ones Claude Code has actually
-  // opened on this machine — every ~/.claude/projects slug decodes to a
+  // opened on this machine - every ~/.claude/projects slug decodes to a
   // directory (checkWorkingTier collected them). No guess about where
   // projects live is needed, and a repo Claude never opened cannot have
   // been written to by it. A project's git toplevel is checked as well, so
@@ -877,7 +877,7 @@ function checkRepoStores() {
         }
       }
     } else {
-      warn('repo-store', `${showPath(dir)} is not inside a git repo — this store ` +
+      warn('repo-store', `${showPath(dir)} is not inside a git repo - this store ` +
         'travels with nothing.');
     }
 
@@ -909,7 +909,7 @@ function checkRepoStores() {
 
   if (uncommitted.length) {
     warn('repo-store', `${uncommitted.length} in-repo memory file(s) are uncommitted. ` +
-      'docs/ai-memory/ is only durable once committed — until then it is as machine-local ' +
+      'docs/ai-memory/ is only durable once committed - until then it is as machine-local ' +
       'as the working tier.', uncommitted);
   }
 
@@ -917,7 +917,7 @@ function checkRepoStores() {
 }
 
 // ---------------------------------------------------------------------------
-// 8. cross-tier duplicates — the same fact written into two tiers, mechanised
+// 8. cross-tier duplicates - the same fact written into two tiers, mechanised
 // ---------------------------------------------------------------------------
 
 function checkDuplicates(syncedMeta, workingMeta, repoMeta) {
@@ -937,7 +937,7 @@ function checkDuplicates(syncedMeta, workingMeta, repoMeta) {
   const collisions = [];
   for (const [slug, group] of bySlug) {
     const stores = [...new Set(group.map((g) => g.store))];
-    if (stores.length > 1) collisions.push(`${slug}  —  ${stores.join('  +  ')}`);
+    if (stores.length > 1) collisions.push(`${slug}  -  ${stores.join('  +  ')}`);
   }
   if (collisions.length) {
     error('duplicates', `${collisions.length} memory slug(s) exist in more than one store. ` +
@@ -983,11 +983,11 @@ function report() {
     // WARNs that the docs promise the notice will raise: an installed hook
     // that drifted from the framework copy (the pull-without-setup case) and
     // index parity (a file written but unreachable). Sync/duplicate WARNs stay
-    // in the full report — they are advisory and would make the notice noisy.
+    // in the full report - they are advisory and would make the notice noisy.
     const BRIEF_WARN_CHECKS = new Set(['wiring', 'index']);
     const warns = findings.filter((f) => f.level === 'WARN' && BRIEF_WARN_CHECKS.has(f.check));
     // Silence is the goal state. Nothing to say once the stores are drained
-    // and the wiring is sound — this stops being noise instead of becoming
+    // and the wiring is sound - this stops being noise instead of becoming
     // wallpaper the user learns to scroll past.
     if (!errs.length && !undrained && !warns.length) return;
 
@@ -995,7 +995,7 @@ function report() {
     if (errs.length) {
       // First clause only: cut at a sentence end or an em-dash aside, never at
       // the '.' inside a path like ~/.claude.
-      parts.push(`${errs.length} ERROR(s): ` + errs.map((e) => e.message.split(/\.\s|\s—\s/)[0]).join('; '));
+      parts.push(`${errs.length} ERROR(s): ` + errs.map((e) => e.message.split(/\.\s|\s-\s/)[0]).join('; '));
     }
     if (undrained) {
       // Slugs all start with the slugified $HOME; drop it so the line stays short.
@@ -1014,7 +1014,7 @@ function report() {
         : '';
       parts.push(
         `${undrained} memory file(s) sit in machine-local stores that sync nowhere` +
-        (where ? ` (${where}${undrained > 4 ? ', …' : ''})` : '') +
+        (where ? ` (${where}${undrained > 4 ? ', ...' : ''})` : '') +
         `. A machine wipe takes them.`
       );
     }
@@ -1023,10 +1023,10 @@ function report() {
       // First clause of the message, plus the first item when it names the
       // culprit (the drifted hook is already in the message; the unindexed
       // files are only in the items).
-      const head = w.message.split(/\.\s|\s—\s/)[0];
+      const head = w.message.split(/\.\s|\s-\s/)[0];
       const drift = /differs from the framework copy/.test(w.message);
       const tail = drift
-        ? ` — rerun ${REINSTALL}`
+        ? ` - rerun ${REINSTALL}`
         : w.items.length
           ? `: ${w.items.slice(0, 3).join(', ')}${w.items.length > 3 ? `, +${w.items.length - 3} more` : ''}`
           : '';
@@ -1043,7 +1043,7 @@ function report() {
     if (parts.length) {
       lines.push(
         parts.join('. ') +
-        ' — the user does not track this by hand, so mention it ONCE, briefly, at a natural pause, ' +
+        ' - the user does not track this by hand, so mention it ONCE, briefly, at a natural pause, ' +
         'and drop it if they do not pick it up. ' +
         // The "~15-minute slice" advice is about undrained stores. With only
         // ERRORs to report there are no stores to slice, and offering to drain
@@ -1055,7 +1055,7 @@ function report() {
     }
     lines.push(...warnLines);
     if (!parts.length) {
-      lines.push('Advisory only — mention it once if the user is touching memory or setup, otherwise ' +
+      lines.push('Advisory only - mention it once if the user is touching memory or setup, otherwise ' +
         `let it go. ${doctorCmd} has the full report.`);
     }
     process.stdout.write(lines.join('\n') + '\n');
@@ -1123,13 +1123,13 @@ function report() {
   }
 
   if (!findings.length) {
-    console.log(c('1;32', '  clean — every tier wired, indexed and drained.') + '\n');
+    console.log(c('1;32', '  clean - every tier wired, indexed and drained.') + '\n');
     return;
   }
 
   console.log(
     `${counts.ERROR} error(s), ${counts.WARN} warning(s), ${counts.INFO} note(s). ` +
-    'Nothing was changed — this is a read-only check.\n'
+    'Nothing was changed - this is a read-only check.\n'
   );
 }
 

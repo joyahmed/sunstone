@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Every destination below hangs off the profile directory. With USERPROFILE
-# unset — a service account, a scheduled task, a stripped environment — an
+# unset - a service account, a scheduled task, a stripped environment - an
 # unguarded $HomeDir is the empty string, every path resolves to the drive
 # root, and the install lands in \.claude, \.git-hooks and \CLAUDE.md without
 # a word. The .NET call finds the profile even when the variable is gone;
@@ -34,7 +34,7 @@ if (-not $HomeDir) { throw "USERPROFILE is not set and your profile directory co
 # ⛔ git is a hard dependency of every step that follows: the memory repo is
 # resolved with it, and the two guards are installed by pointing the GLOBAL
 # core.hooksPath at ~\.git-hooks. Checked here, before the banner, for the same
-# reason setup.sh checks it there — a missing git used to surface halfway
+# reason setup.sh checks it there - a missing git used to surface halfway
 # through, and on this side it was worse than a bare error: Invoke-GitQuiet
 # swallows the CommandNotFoundException and leaves $LASTEXITCODE holding some
 # earlier command's status, so a clone that never happened could read as
@@ -58,14 +58,14 @@ function Backup-Item {
     param([string]$Path)
     if (Test-Path -LiteralPath $Path) {
         # Unique even when the same file is replaced twice within one second
-        # — the loop New-SettingsSnapshot and setup.sh's backup() both use.
+        # - the loop New-SettingsSnapshot and setup.sh's backup() both use.
         # Without it the second backup silently overwrites the first.
         $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         $i = 1
         while (Test-Path -LiteralPath $bak) { $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')-$i"; $i++ }
         # ⛔ NEVER announce a backup that may not exist. This used to print
-        # "backed up: …" unconditionally after a SilentlyContinue copy, so every
-        # such line was an unverified claim — and callers then deleted the
+        # "backed up: ..." unconditionally after a SilentlyContinue copy, so every
+        # such line was an unverified claim - and callers then deleted the
         # original on the strength of it. Verify, and report the truth.
         #
         # $errs matters as much as Test-Path: Copy-Item -Recurse keeps going
@@ -83,10 +83,10 @@ function Backup-Item {
             return $true
         }
         $why = if ($errs.Count -gt 0) { $errs[0].ToString() } else { "destination was not created" }
-        Write-Host "  ! BACKUP FAILED for $Path — $why" -ForegroundColor Red
+        Write-Host "  ! BACKUP FAILED for $Path - $why" -ForegroundColor Red
         Write-Host "    nothing here will be deleted on the strength of a backup that does not exist." -ForegroundColor Red
         if (Test-Path -LiteralPath $bak) {
-            Write-Host "    a PARTIAL copy was left at $bak — inspect it before trusting it." -ForegroundColor Red
+            Write-Host "    a PARTIAL copy was left at $bak - inspect it before trusting it." -ForegroundColor Red
         }
         return $false
     }
@@ -108,21 +108,21 @@ function Get-TreeSignature {
         # ⛔ Get-FileHash MUST NOT be allowed to throw here. This function only
         # decides "same or different"; it is not a integrity check, and it has
         # no business aborting an install. Under $ErrorActionPreference = "Stop"
-        # a single unreadable file used to kill the whole run — which is exactly
+        # a single unreadable file used to kill the whole run - which is exactly
         # what happened on the first end-to-end Windows run (2026-09-11):
         #   Get-FileHash: The file cannot be accessed by the system. :
-        #   '…\.codex\skills\agile-product-owner\agile-product-owner\SKILL.md'
+        #   '...\.codex\skills\agile-product-owner\agile-product-owner\SKILL.md'
         # Those are WSL-created symlinks (reparse tag 0xA000001D,
         # IO_REPARSE_TAG_LX_SYMLINK). Win32 returns error 1920 for them because
         # the tag is Linux-specific; git-bash resolves them, PowerShell cannot.
-        # They get onto C: whenever a recursive copy is run from inside WSL —
+        # They get onto C: whenever a recursive copy is run from inside WSL -
         # which is the documented workaround for the 9P-share copy failure, so
         # this residue is self-inflicted by our own advice and WILL be present
         # on machines set up that way.
         #
         # An unreadable file folds in as a sentinel instead. The source tree
         # comes from a git clone and is always readable, so the sentinel makes
-        # the two signatures differ — which routes to backup-then-replace, the
+        # the two signatures differ - which routes to backup-then-replace, the
         # safe outcome. It does NOT make an unchanged tree look changed on a
         # re-run, so this adds no .bak clutter.
         try {
@@ -151,7 +151,7 @@ function Test-SameFile {
 function Install-File {
     param([string]$Src, [string]$Dst)
     # ⚠️ Backup-Item returns a value now, and an uncaptured return in PowerShell
-    # flows into THIS function's output — which then flows into Ship's. Assign
+    # flows into THIS function's output - which then flows into Ship's. Assign
     # it, both to keep the streams clean and because the answer matters: a
     # single file is about to be overwritten with -Force, and if we could not
     # preserve the old one we leave it alone rather than destroy it silently.
@@ -221,7 +221,7 @@ function Write-Utf8NoBom {
 }
 
 # Read one KEY from <personal-repo>/claude-setup/config/sunstone.conf.
-# A tiny KEY=VALUE parser — the file is user content and is never executed.
+# A tiny KEY=VALUE parser - the file is user content and is never executed.
 # Same rules as the hooks: last matching line wins, whitespace around the key
 # and the '=' allowed, a '#' starts a comment only at line start or after
 # whitespace (so a bare '#' inside a value or a double-quoted value is kept),
@@ -241,7 +241,7 @@ function Get-ConfValue {
         if ($t.Substring(0, $eq).Trim() -ne $Key) { continue }
         # Leading whitespace is kept until the comment rule has run: KEY=#x is
         # the value "#x", KEY= #x is a comment (empty -> $Default). A quoted
-        # value runs to the NEXT '"' — a '#' inside it is literal, anything
+        # value runs to the NEXT '"' - a '#' inside it is literal, anything
         # after the closing quote is ignored, and an unterminated quote takes
         # the rest of the line. Same shape as readConf() in the .js hook; an
         # anchored ^"(.*)"$ regex cannot express it (it is greedy across a
@@ -256,7 +256,7 @@ function Get-ConfValue {
             $v = ($v -replace '\s#.*$', '').Trim()
         }
         # Last matching line wins, and an EMPTY value un-sets the key so the
-        # caller's default applies — `KEY=x` followed by `KEY=` reads as unset,
+        # caller's default applies - `KEY=x` followed by `KEY=` reads as unset,
         # not as "x". setup.sh gets that for free (grep | tail -n1 sees only the
         # last line); this loop has to say it, and used to keep the earlier
         # value instead, so the two installers disagreed about a conf file that
@@ -276,7 +276,7 @@ $ClaudeHooks  = "$ClaudeDir\hooks"
 $settingsPath = "$ClaudeDir\settings.json"
 # Whether the user had a settings.json BEFORE this run. The hook registration
 # below creates one, so without this flag the template merge that follows would
-# "back up" a file the user never wrote — a .bak of an intermediate state
+# "back up" a file the user never wrote - a .bak of an intermediate state
 # nobody would ever want restored. setup.sh carries the same flag.
 $settingsPreexisted = Test-Path -LiteralPath $settingsPath
 function New-SettingsSnapshot {
@@ -330,7 +330,7 @@ if ($SkipMemory) {
     }
 
     # 2) Resolve it: a local path is used in place; a URL is cloned into -CloneTo,
-    #    or by default into ~\.ai-memory — the one path every hook also tries when
+    #    or by default into ~\.ai-memory - the one path every hook also tries when
     #    ai-memory-path is missing, so a lost path file still finds it. An
     #    existing clone at the destination is reused. A URL is scheme://... or
     #    the scp form, which must START with user@host: (same rule as setup.sh).
@@ -432,13 +432,13 @@ if ((Test-Path -LiteralPath $hkSrc) -and (Test-Command node)) {
         Write-Host "  installed statusline-command.js"
     }
 
-    # Register SessionStart/SessionEnd memory hooks in settings.json —
+    # Register SessionStart/SessionEnd memory hooks in settings.json -
     # idempotent, existing entries are kept. Backed up first; the backup is
     # dropped again if the merge turned out to be a no-op.
     #
     # ⚠️ The statusline path is the LAST argument and is optional. It used to be
     # required and second, which meant a checkout without a statusline
-    # registered no memory hooks at all — the preference and the feature were
+    # registered no memory hooks at all - the preference and the feature were
     # wired together.
     $settingsBak = New-SettingsSnapshot
     $memoryHooksOk = $true
@@ -469,7 +469,7 @@ if ((Test-Path -LiteralPath $hkSrc) -and (Test-Command node)) {
         Write-ManualHooks
     }
 } else {
-    # Not fatal — the git hooks and both install roots below still apply — but
+    # Not fatal - the git hooks and both install roots below still apply - but
     # it must not read as a success: on Windows the memory hooks ARE the node
     # ports (there is no python3/jq for the .sh twins), so without node there
     # is no session memory at all. The summary at the end repeats this.
@@ -489,22 +489,22 @@ Write-Host ""
 #
 # `init.templateDir` alone would not reach existing repos (templates are copied
 # at git init / clone only); `core.hooksPath` does, which is why it is used. A
-# repo-local core.hooksPath overrides the global one completely — such a repo
+# repo-local core.hooksPath overrides the global one completely - such a repo
 # needs the files copied into its own hooks directory as well.
 #
 # ⚠️ The source of truth is claude-setup\config\git-hooks\*; the live copies are
-# ~\.git-hooks\*. Pulling this repo does not update the live copies — re-run
+# ~\.git-hooks\*. Pulling this repo does not update the live copies - re-run
 # setup.ps1 after a pull that touches a hook.
 #
 # WHICH hooks land is not decided here. The files are installed per install
 # root by Install-GitHooks, exactly like every other tree, so the personal repo
 # can ship guards of its own and can override a shipped one by carrying the
 # same filename. This section only prepares the directories and points git at
-# them — a one-time global setting, not a per-root one.
+# them - a one-time global setting, not a per-root one.
 #
 # The framework itself ships only the two conf-driven guards, pre-commit and
-# pre-push. Anything opinionated about commit CONTENT — a message
-# rewriter, a template, a linter — belongs in a personal repo rather than
+# pre-push. Anything opinionated about commit CONTENT - a message
+# rewriter, a template, a linter - belongs in a personal repo rather than
 # in a framework other people install: carrying the file there IS the opt-in,
 # which is why there is no flag to gate it with.
 $gitHooksOk = $false
@@ -549,8 +549,8 @@ if (Test-Path -LiteralPath "$ScriptDir\claude-setup\config\git-hooks") {
 # ── Install roots: this checkout, then the personal repo (the overlay) ─────
 #
 # The personal memory repo MAY carry the same relative layout as this checkout
-# — skills\, agents\, config\, plugins\, claude-setup\commands\,
-# claude-setup\config\{agents,hooks,settings.json,CLAUDE.global.md} — and it is
+# - skills\, agents\, config\, plugins\, claude-setup\commands\,
+# claude-setup\config\{agents,hooks,settings.json,CLAUDE.global.md} - and it is
 # then applied as a SECOND install root, after this one, with identical rules.
 # Whatever both roots ship, the personal copy lands last and wins. This
 # checkout may ship none of these trees; then only the personal root
@@ -613,7 +613,7 @@ function Ship-Dir {
 }
 
 # skills\<name>\ → ~\.codex\skills, ~\.config\opencode\skills, ~\.claude\skills
-# (each <name> replaced whole — a skill is a tree, not a file to diff — and a
+# (each <name> replaced whole - a skill is a tree, not a file to diff - and a
 # name the later root also ships is left to that root).
 function Install-Skills {
     param([string]$Root)
@@ -631,14 +631,14 @@ function Install-Skills {
                 # ⚠️ A skill is replaced WHOLE rather than merged, so an
                 # existing <name>\ here may be a skill the user wrote by hand
                 # under the same name, not an earlier copy of ours. Back it up
-                # first — and only when it DIFFERS, so re-running an unchanged
+                # first - and only when it DIFFERS, so re-running an unchanged
                 # tree leaves no .bak clutter. Mirrors setup.sh:step_skills.
                 if (Test-Path -LiteralPath $target) {
                     if ((Get-TreeSignature $d.FullName) -ne (Get-TreeSignature $target)) {
                         # ⛔ If the backup did not happen, do NOT delete. Skip this
                         # skill in this root and carry on: one unbackupable tree
                         # must not cost the user their work, and must not abort
-                        # the whole install either — that failure mode is what
+                        # the whole install either - that failure mode is what
                         # Get-TreeSignature's try/catch exists to prevent.
                         if (-not (Backup-Item $target)) {
                             Write-Host "    skipped: $target left exactly as it was" -ForegroundColor Yellow
@@ -658,7 +658,7 @@ function Install-Skills {
 
 # agents\AGENTS.md → ~\AGENTS.md ; agents\CLAUDE.md → ~\CLAUDE.md + ~\.claude\CLAUDE.md
 # (a differing existing file is backed up beside itself). A CLAUDE.global.md
-# shipped by either root takes ~\.claude\CLAUDE.md instead — see Install-ClaudeGlobal.
+# shipped by either root takes ~\.claude\CLAUDE.md instead - see Install-ClaudeGlobal.
 function Install-Agents {
     param([string]$Root)
     $got = @(); $n = 0
@@ -707,8 +707,8 @@ function Install-Settings {
     param([string]$Root)
     $tpl = "$Root\claude-setup\config\settings.json"
     if (-not (Test-Path -LiteralPath $tpl)) { Step-Skip "settings"; return }
-    if (-not (Test-Command node)) { Write-Host "  settings: skipped (node not found — merge $tpl into $settingsPath by hand)"; return }
-    if (-not (Test-Path -LiteralPath $tplMrg)) { Write-Host "  settings: skipped (merger not shipped: $tplMrg — merge $tpl into $settingsPath by hand)"; return }
+    if (-not (Test-Command node)) { Write-Host "  settings: skipped (node not found - merge $tpl into $settingsPath by hand)"; return }
+    if (-not (Test-Path -LiteralPath $tplMrg)) { Write-Host "  settings: skipped (merger not shipped: $tplMrg - merge $tpl into $settingsPath by hand)"; return }
     # Only a settings.json the user already had is worth backing up; one this
     # run just created a few steps ago is not (see $settingsPreexisted).
     $bak = $null
@@ -814,8 +814,8 @@ function Install-Root {
     return ,$script:Installed
 }
 
-# The overlay root: the repo resolved above, or — with -SkipMemory or when
-# nothing was passed and no console asked — the repo already recorded in
+# The overlay root: the repo resolved above, or - with -SkipMemory or when
+# nothing was passed and no console asked - the repo already recorded in
 # ~\.claude\ai-memory-path (or ~\.ai-memory, the hooks' own fallback).
 $OverlayRoot = $null
 if (-not $SkipOverlay) {
@@ -849,7 +849,7 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 
 # A skill left untouched because its backup failed is the one outcome a reader
-# must not scroll past — "Setup Complete" would otherwise imply it landed.
+# must not scroll past - "Setup Complete" would otherwise imply it landed.
 if ($script:SkillsSkipped -gt 0) {
     Write-Host "! $($script:SkillsSkipped) skill tree(s) were NOT updated: their backup failed, so the existing" -ForegroundColor Red
     Write-Host "  copy was left exactly as it was rather than deleted. Look for BACKUP FAILED above." -ForegroundColor Red
@@ -862,7 +862,7 @@ if ($script:SkillsSkipped -gt 0) {
 Write-Host "Installed:"
 if ($gitHooksOk) {
     # ⚠️ $gitHookNames was never assigned anywhere in this script, so this line
-    # printed a literal "{}" — reported by the first successful Windows run,
+    # printed a literal "{}" - reported by the first successful Windows run,
     # 2026-09-11. Read the LIVE directory instead, exactly as setup.sh:718 does:
     # what matters to the reader is which hooks are in force now, including any
     # the personal root added, not which ones this run happened to write.
@@ -877,7 +877,7 @@ $doctorName = if ($doctorCmd) { if ($doctorCmd.StartsWith("node")) { ", memory-d
 if (Test-Path -LiteralPath $hkDst) {
     Write-Host "  session hooks: $ClaudeHooks\{ai-memory-sync.js, ai-memory-commit.js$doctorName}"
 } else {
-    Write-Host "  session hooks: NOT installed — node is required for them on Windows" -ForegroundColor Yellow
+    Write-Host "  session hooks: NOT installed - node is required for them on Windows" -ForegroundColor Yellow
 }
 Write-Host "  framework:     $ScriptDir  (recorded in $ClaudeDir\sunstone-path for the doctor notice)"
 Write-Host ""
@@ -908,7 +908,7 @@ if ($MemoryRepoPath) {
     } elseif (Test-Path -LiteralPath (Join-Path $MemoryRepoPath "$memDir/MEMORY.md")) {
         Write-Host "  injected file: $memDir/MEMORY.md  (MEMORY_FILE $memFile not found; using the index)"
     } else {
-        Write-Host "  injected file: none yet — create $memFile in the repo and the hook picks it up next session"
+        Write-Host "  injected file: none yet - create $memFile in the repo and the hook picks it up next session"
     }
     Write-Host "  memory tree:   $memDir  (the SessionEnd hook commits only this path)"
     Write-Host "  optional config: $MemoryRepoPath\claude-setup\config\sunstone.conf"

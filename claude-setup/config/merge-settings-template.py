@@ -7,7 +7,7 @@ Rules (the Node port, merge-settings-template.mjs, applies exactly the same):
 - "hooks": for each event in the template, append every entry whose command is
   not already registered under that event. "Already registered" means an entry
   there runs the same command string, or the same script judged by the script
-  file's basename — so `bash ~/.claude/hooks/x.sh` and
+  file's basename - so `bash ~/.claude/hooks/x.sh` and
   `bash /opt/dotfiles/hooks/x.sh` count as one hook. This is the rule
   merge-ai-memory-hook.py uses; the two must agree or a hook ends up registered
   twice under two spellings. A template group's "matcher" (and any other keys on
@@ -110,7 +110,7 @@ def main():
                 arr.append(new_group)
                 for h in missing:
                     changes.append(f"registered {event} hook: {h['command'][:60]}"
-                                   + ("…" if len(h["command"]) > 60 else ""))
+                                   + ("..." if len(h["command"]) > 60 else ""))
             if arr:
                 hooks[event] = arr
         if hooks:

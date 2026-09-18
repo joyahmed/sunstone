@@ -1,4 +1,4 @@
-# supermode — launch Claude Code for unattended work (Windows).
+# supermode - launch Claude Code for unattended work (Windows).
 #
 # The PowerShell twin of bin/supermode: SUPERMODE=1 in the environment (the context
 # guard is live; a successor inherits it), supermode.settings.json layered on this
@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 $cfg = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR -replace '^~', $HOME } else { Join-Path $HOME '.claude' }
 $settings = Join-Path $cfg 'supermode.settings.json'
 if (-not (Test-Path -LiteralPath $settings)) {
-  Write-Error "supermode: $settings is missing — run sunstone's setup.ps1 (or copy claude-setup\config\supermode.settings.json there)"
+  Write-Error "supermode: $settings is missing - run sunstone's setup.ps1 (or copy claude-setup\config\supermode.settings.json there)"
   exit 1
 }
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Write-Error 'supermode: claude is not on PATH'; exit 1 }

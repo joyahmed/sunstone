@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// ai-memory-commit.js — SessionEnd hook (Windows port of ai-memory-commit.sh).
+// ai-memory-commit.js - SessionEnd hook (Windows port of ai-memory-commit.sh).
 // The write half of memory sync.
 //
 // Commits anything written under the memory tree (MEMORY_DIR, default
 // claude-setup/memory/) during the session.
 // It does NOT push: no network call happens here, so ending a session is never
 // slower for it. The commit goes out on the next SessionStart, where
-// ai-memory-sync.js already talks to the remote — one round trip, in a session
+// ai-memory-sync.js already talks to the remote - one round trip, in a session
 // the user started, so a rebase conflict surfaces while they are present.
 //
 // Scope is deliberately narrow: this stages ONE directory by path and nothing
@@ -18,7 +18,7 @@
 // framework's pre-commit, which refuses a commit that mixes memory and source)
 // is satisfied by construction and there is nothing left for it to check. The
 // consequence is that repo-local hooks in the memory repo (pre-commit,
-// commit-msg, prepare-commit-msg — husky, lint-staged, and the like) are
+// commit-msg, prepare-commit-msg - husky, lint-staged, and the like) are
 // bypassed for THIS ONE COMMIT only; every commit a person makes in that repo
 // still runs them.
 //
@@ -64,7 +64,7 @@ function readConf(repo) {
       val = val.replace(/\s#.*$/, "").trim();
     }
     // Last matching line wins; an empty value un-sets the key so the caller's
-    // default applies — exactly what conf_get in the .sh twin does.
+    // default applies - exactly what conf_get in the .sh twin does.
     if (val) conf[key] = val;
     else delete conf[key];
   }
@@ -79,7 +79,7 @@ function git(repo, args, opts = {}) {
     // GIT_TERMINAL_PROMPT=0 for the same reason the .sh twin sets it: a hook
     // has no terminal to answer a credential prompt on, and a prompt waiting
     // on stdin is the hang the timeout above is guarding against. Spread the
-    // parent env first — passing `env` replaces it wholesale.
+    // parent env first - passing `env` replaces it wholesale.
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     ...opts,
   });
@@ -127,7 +127,7 @@ function main() {
   }
   if (!dirty) return;
 
-  // Refuse to run mid-rebase/merge — committing into that state makes a mess a
+  // Refuse to run mid-rebase/merge - committing into that state makes a mess a
   // human then has to unpick.
   let gitDir;
   try {
@@ -148,7 +148,7 @@ function main() {
 
   // Refuse on a detached HEAD too. A commit made there is on no branch: the
   // moment the user checks a branch back out the session's memory is gone from
-  // the tree, and — the sync hook having no branch to push either — nothing
+  // the tree, and - the sync hook having no branch to push either - nothing
   // ever recovers it. Refusing leaves the files on disk, where the next session
   // picks them up. (An unborn branch is fine: symbolic-ref resolves before the
   // first commit.)
@@ -170,7 +170,7 @@ function main() {
   try {
     // core.quotePath=false because git's default is to octal-escape and
     // double-quote any path that is not pure ASCII, which would put
-    // `r\303\251sum\303\251.md"` in the subject line — and the stray closing quote
+    // `r\303\251sum\303\251.md"` in the subject line - and the stray closing quote
     // also defeats the `.md` strip.
     staged = git(repo, ["-c", "core.quotePath=false", "diff", "--cached", "--name-only", "--", MEM_DIR])
       .split(/\r?\n/)
@@ -187,8 +187,8 @@ function main() {
     .slice(0, 90);
 
   // A failed commit must not leave the memory tree staged. The usual causes are
-  // environmental and outlast the session — no committer identity yet, a signing
-  // key this non-interactive hook cannot unlock, a locked index — so the staging
+  // environmental and outlast the session - no committer identity yet, a signing
+  // key this non-interactive hook cannot unlock, a locked index - so the staging
   // would still be there on the user's next commit in that repo, where it is
   // either swept into an unrelated commit or refused outright by the framework's
   // own mixed-staging guard. Put the index back and stay silent: the files are
@@ -199,7 +199,7 @@ function main() {
       "--quiet",
       "--no-verify",
       "-m",
-      `memory: ${staged.length} file(s) from a session — ${files}`,
+      `memory: ${staged.length} file(s) from a session - ${files}`,
       "--",
       MEM_DIR,
     ]);
@@ -213,14 +213,14 @@ function main() {
   // ⚠️ Why push here when ai-memory-sync pushes on the next SessionStart:
   // because "the next SessionStart" means the next one ON THIS MACHINE. End
   // your last session on one machine and open another, and that memory is
-  // committed locally and reachable from nowhere — the exact case this layer
+  // committed locally and reachable from nowhere - the exact case this layer
   // exists to prevent. The next SessionStart is still the reliable path: it
   // pulls first, resolves divergence and surfaces a conflict while the user is
   // there. This is the opportunistic one, and it stays silent about failure
   // because anything it misses the next session repairs.
   //
   // detached + unref'd so ending a session is never slower for it, whether the
-  // network is slow, dead or absent — the failure mode that kept this hook off
+  // network is slow, dead or absent - the failure mode that kept this hook off
   // the network to begin with. Matches ai-memory-commit.sh.
   //
   // ⛔ Current branch only, never --force, never a new remote. A rejected push
@@ -234,7 +234,7 @@ function main() {
 
   // ⛔ Do NOT pass spawn's `timeout` option here. It arms a timer that keeps
   // this process's event loop alive, so node sits waiting for the full timeout
-  // even with the child detached and unref'd — measured at 5s against a dead
+  // even with the child detached and unref'd - measured at 5s against a dead
   // remote, which is precisely the delay at session end this is meant to
   // avoid. The bound comes from git instead: the low-speed settings below end
   // a stalled HTTP transfer, GIT_TERMINAL_PROMPT=0 stops a credential prompt

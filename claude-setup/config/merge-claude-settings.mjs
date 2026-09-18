@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// merge-claude-settings.mjs — idempotently merge the Windows memory hooks into
+// merge-claude-settings.mjs - idempotently merge the Windows memory hooks into
 // ~/.claude/settings.json without clobbering existing keys.
 // Usage: node merge-claude-settings.mjs <settingsPath> <hookJs> [commitJs] [statuslineJs]
 // Windows counterpart of the Linux merge-ai-memory-hook.py.
 //
 // ⚠️ statuslineJs is OPTIONAL and comes LAST. The framework ships no statusline
-// — a statusline is a preference, not part of the memory layer — so this
+// - a statusline is a preference, not part of the memory layer - so this
 // registers one only when a root actually supplied a script. It used to be a
 // required argument, which meant a checkout with no statusline registered NO
 // MEMORY HOOKS AT ALL: the feature and the preference were wired together, and
@@ -37,7 +37,7 @@ if (fs.existsSync(settingsPath)) {
   }
 }
 
-// statusLine — only when a root shipped a script to point it at. Setting the
+// statusLine - only when a root shipped a script to point it at. Setting the
 // key with no script behind it is the exact bug this framework shipped for a
 // while: every session running a statusline command that does not exist.
 if (statuslineCmd) settings.statusLine = { type: "command", command: statuslineCmd };
@@ -45,7 +45,7 @@ if (statuslineCmd) settings.statusLine = { type: "command", command: statuslineC
 // Append a hook command under an event only if no entry there already runs the
 // same command or the same script. "Same script" is judged by basename, so
 // `node ~/.claude/hooks/x.js`, `node C:/dotfiles/hooks/x.js` and
-// `node "C:/my dots/hooks/x.js"` count as one hook — the same rule
+// `node "C:/my dots/hooks/x.js"` count as one hook - the same rule
 // merge-ai-memory-hook.py and merge-settings-template.mjs use.
 const SCRIPT_RE = /"([^"]*?\.(?:sh|mjs|js|py))"|'([^']*?\.(?:sh|mjs|js|py))'|([\w./~\\:-]+\.(?:sh|mjs|js|py))\b/g;
 const scripts = (c) => {
@@ -73,7 +73,7 @@ register("SessionStart", hookCmd);
 
 // SessionEnd: commit whatever the session wrote under the memory tree
 // (MEMORY_DIR, default claude-setup/memory). Deliberately a separate hook from
-// the SessionStart one — this half never touches the network, so ending a
+// the SessionStart one - this half never touches the network, so ending a
 // session stays instant. The commit is pushed by ai-memory-sync.js on the next
 // start, where a round trip is already being paid and the user is present if a
 // rebase conflicts.

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# ai-memory-sync.sh — SessionStart hook.
+# ai-memory-sync.sh - SessionStart hook.
 # 1. Locates the user's memory repo (portable across machines via ~/.claude/ai-memory-path).
 # 2. Fast-forward pulls it (offline-safe, short timeout) so the memory is fresh.
 # 3. Injects the memory file (MEMORY_FILE, default claude-setup/memory/ABOUT-ME.md)
 #    into Claude's context as additionalContext.
 #
-# Every failure mode is silent: no repo, no network, no python — the session
+# Every failure mode is silent: no repo, no network, no python - the session
 # still starts cleanly, just without the memory injection.
 
 set -u
 
 # --- locate the repo -------------------------------------------------------
 # The single line in ~/.claude/ai-memory-path names the clone. With no path
-# file there is one generic fallback, $HOME/.ai-memory — if that is a git
+# file there is one generic fallback, $HOME/.ai-memory - if that is a git
 # repo it is used, otherwise there is nothing to do.
 PATH_FILE="${HOME}/.claude/ai-memory-path"
 REPO=""
@@ -33,7 +33,7 @@ done
 # is user content, so it is grepped rather than sourced. Absent file → defaults.
 CONF="$REPO/claude-setup/config/sunstone.conf"
 conf_get() {
-  # conf_get KEY DEFAULT — last matching line wins; an empty value falls back
+  # conf_get KEY DEFAULT - last matching line wins; an empty value falls back
   # to DEFAULT. Rules, identical to readConf() in the .js twin:
   #   - '#' starts a comment only at line start or after whitespace, so a#b
   #     is a value;
@@ -67,7 +67,7 @@ MEMORY_FILE="$(conf_get MEMORY_FILE claude-setup/memory/ABOUT-ME.md)"
 # wrapper must not do: a remote that accepts the connection and then never
 # answers would hang the hook, and with it the session start, for as long as the
 # user is willing to wait. So with no timeout binary the wrapper becomes the
-# watchdog itself — the command goes to the background and is killed on time.
+# watchdog itself - the command goes to the background and is killed on time.
 # The .js twin gets the same bound for free from execFileSync's `timeout`.
 #
 # GIT_TERMINAL_PROMPT=0 on every branch: a hook has no terminal to answer a
@@ -102,8 +102,8 @@ run() {
 # CANNOT integrate divergence, and with several machines and clients (a WSL
 # shell, a desktop app, a cloud session) all committing to the memory tree,
 # divergence is the normal case rather than the exception. Left at ff-only
-# alone, a machine that falls behind fails to pull, then fails to push, and —
-# every failure here being silent — simply stops syncing forever without
+# alone, a machine that falls behind fails to pull, then fails to push, and -
+# every failure here being silent - simply stops syncing forever without
 # saying so.
 #
 # So on failure, rebase our memory commits on top instead. Rewriting local
@@ -113,7 +113,7 @@ run() {
 # for a human to discover later.
 sync_pull() {
   run 8 git -C "$REPO" pull --ff-only --quiet && return 0
-  # No upstream, or nothing upstream we lack — this is offline, not divergence.
+  # No upstream, or nothing upstream we lack - this is offline, not divergence.
   git -C "$REPO" rev-parse '@{u}' >/dev/null 2>&1 || return 1
   [ "$(git -C "$REPO" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)" = "0" ] && return 1
   if ! run 25 git -C "$REPO" pull --rebase --autostash --quiet; then
@@ -127,13 +127,13 @@ sync_pull || true
 
 # --- push what last session committed --------------------------------------
 # The SessionEnd hook (ai-memory-commit.sh) commits memory writes but never
-# pushes, so the network cost lands here instead — where a round trip is
+# pushes, so the network cost lands here instead - where a round trip is
 # already being paid. Nothing to push is the common case and costs one local
 # rev-list.
 #
 # One retry: a push can be rejected by a commit that landed between our pull
 # and our push, and re-syncing then pushing again clears exactly that case.
-# If the retry also fails the commits stay local and go out next session —
+# If the retry also fails the commits stay local and go out next session -
 # which is now genuinely "next time" rather than "never".
 ahead() {
   [ "$(git -C "$REPO" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" != "0" ]

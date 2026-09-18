@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// context-guard — the supermode checkpoint nudge. Pure Node.js, no shell dependency.
+// context-guard - the supermode checkpoint nudge. Pure Node.js, no shell dependency.
 //
 // A PostToolUse hook. After every tool call it reads the context gauge and, once the
-// session is past the threshold (70% by default), tells the model — as hook context it
-// can see — to checkpoint: finish the slice, commit, write the handoff, start the
-// successor, stop. It says so ONCE per 5% band (70, 75, 80 …), so a session that is
+// session is past the threshold (70% by default), tells the model - as hook context it
+// can see - to checkpoint: finish the slice, commit, write the handoff, start the
+// successor, stop. It says so ONCE per 5% band (70, 75, 80 ...), so a session that is
 // mid-slice hears it again as the window fills, and never on every call.
 //
-// Why a hook: the model cannot see its own context percentage, and compaction — the
-// harness's answer to a full window — is the largest single request of a session and
+// Why a hook: the model cannot see its own context percentage, and compaction - the
+// harness's answer to a full window - is the largest single request of a session and
 // returns a summary without the numbers. Supermode turns auto-compaction off
 // (supermode.settings.json) and hands off to a fresh session instead; this is the part
 // that tells the model when.
 //
 // The gauge, in order of preference:
-//   1. ~/.claude/ctx/<session_id>.pct — written by ctx-gauge.mjs from the status line's
+//   1. ~/.claude/ctx/<session_id>.pct - written by ctx-gauge.mjs from the status line's
 //      own figure, exact. Used when it is less than 10 minutes old.
 //   2. The transcript: the last assistant turn's `usage` (input + cache read + cache
-//      creation tokens) over SUPERMODE_CTX_WINDOW (default 200000). An estimate — a
-//      model with a 1M window reads five times too high unless you set the variable —
+//      creation tokens) over SUPERMODE_CTX_WINDOW (default 200000). An estimate - a
+//      model with a 1M window reads five times too high unless you set the variable -
 //      and the nudge says so.
 //
 // Inert unless SUPERMODE=1 is in the environment, so registering it globally costs
@@ -93,11 +93,11 @@ try {
 } catch { /* skip */ }
 
 const how = estimated
-  ? ` (estimated from the transcript against a ${process.env.SUPERMODE_CTX_WINDOW || "200000"}-token window — set SUPERMODE_CTX_WINDOW, or let ctx-gauge.mjs front your status line, for the exact figure)`
+  ? ` (estimated from the transcript against a ${process.env.SUPERMODE_CTX_WINDOW || "200000"}-token window - set SUPERMODE_CTX_WINDOW, or let ctx-gauge.mjs front your status line, for the exact figure)`
   : "";
 const msg =
   `supermode context guard: this session is at ${pct}% of its context window${how}; the handoff threshold is ${threshold}%. ` +
-  `Checkpoint now — do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
+  `Checkpoint now - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
   `(what is done, what is next, what is blocked, with the exact numbers a fresh session cannot re-derive), move the queue row, ` +
   `then start the successor from the repo root: \`supermode --bg --permission-mode auto "supermode: resume"\` ` +
   `(if that launch is refused, delegate the same resume to an Agent-tool subagent instead), and stop. ` +

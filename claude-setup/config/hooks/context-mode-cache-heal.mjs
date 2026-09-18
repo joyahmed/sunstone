@@ -4,9 +4,9 @@
 // context-mode plugin cache self-heal (auto-deployed)
 // Fixes anthropics/claude-code#46915: auto-update breaks CLAUDE_PLUGIN_ROOT
 // Issue #727: also normalizes stale version paths in existing installPaths
-// Honors CLAUDE_CONFIG_DIR (#577) — checked at this script's runtime so users
+// Honors CLAUDE_CONFIG_DIR (#577) - checked at this script's runtime so users
 // who set CLAUDE_CONFIG_DIR after install still get healed correctly.
-// Pure Node.js — no bash/shell dependency.
+// Pure Node.js - no bash/shell dependency.
 import{existsSync,readdirSync,statSync,symlinkSync,lstatSync,unlinkSync,readFileSync}from"node:fs";
 import{dirname,join,resolve,sep}from"node:path";
 import{homedir}from"node:os";
@@ -28,7 +28,7 @@ try{
         // baked to a previous version dir. Import normalize-hooks from the
         // installPath itself and let it detect + rewrite stale segments.
         try{
-          // #713: narrow helper only — installPath belongs to a different
+          // #713: narrow helper only - installPath belongs to a different
           // version's cache dir; writing plugin.json there is the #711 vector.
           const nhPath=join(p,"hooks","normalize-hooks.mjs");
           if(existsSync(nhPath)){

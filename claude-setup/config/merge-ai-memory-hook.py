@@ -16,7 +16,7 @@ Usage: merge-ai-memory-hook.py <path-to-settings.json> <hook-command> [label]
   (merge-settings-template.py uses the same rule; the two must agree or a hook
   ends up registered twice under two spellings).
 - If <settings dir>/hooks/ai-memory-commit.sh exists, registers it as an async
-  SessionEnd hook the same way — but ONLY on the call that registers its
+  SessionEnd hook the same way - but ONLY on the call that registers its
   SessionStart twin, ai-memory-sync. Setup calls this once per SessionStart
   hook it registers, and the commit hook belongs to exactly one of them; doing
   it on every call registered nothing extra (the merge is idempotent) but
@@ -86,11 +86,11 @@ def main():
         changed = True
         print(f"  registered {label} SessionStart hook")
     else:
-        print(f"  {label} SessionStart hook already present — no change")
+        print(f"  {label} SessionStart hook already present - no change")
 
     # SessionEnd: commit whatever the session wrote under the memory tree
     # (MEMORY_DIR, default claude-setup/memory). Deliberately a separate hook
-    # from the SessionStart one — this half never touches the network, so
+    # from the SessionStart one - this half never touches the network, so
     # ending a session stays instant. The commit is pushed by ai-memory-sync.sh
     # on the next start, where a round trip is already being paid and the user
     # is present if a rebase conflicts.
@@ -113,7 +113,7 @@ def main():
             changed = True
             print("  registered ai-memory SessionEnd commit hook")
         else:
-            print("  ai-memory SessionEnd hook already present — no change")
+            print("  ai-memory SessionEnd hook already present - no change")
 
     if not changed:
         return 0

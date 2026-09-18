@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ai-memory-commit.sh — SessionEnd hook. The write half of memory sync.
+# ai-memory-commit.sh - SessionEnd hook. The write half of memory sync.
 #
 # Commits anything written under the memory tree (MEMORY_DIR, default
 # claude-setup/memory/) during the session.
@@ -9,11 +9,11 @@
 # ⚠️ Why push here at all, when ai-memory-sync.sh pushes on the next
 # SessionStart: because "the next SessionStart" means the next one ON THIS
 # MACHINE. Close the laptop after your last session and open a different
-# machine, and that memory is committed locally and reachable from nowhere —
+# machine, and that memory is committed locally and reachable from nowhere -
 # which is the exact case this whole layer exists to prevent. The next
 # SessionStart remains the reliable path: it pulls first, resolves divergence,
 # and surfaces a conflict while the user is present. This is the opportunistic
-# one — fire-and-forget, --no-verify-free, and silent about failure, because
+# one - fire-and-forget, --no-verify-free, and silent about failure, because
 # anything it misses the next session still fixes.
 #
 # Scope is deliberately narrow: this stages ONE directory by path and nothing
@@ -25,7 +25,7 @@
 # framework's pre-commit, which refuses a commit that mixes memory and source)
 # is satisfied by construction and there is nothing left for it to check. The
 # consequence is that repo-local hooks in the memory repo (pre-commit,
-# commit-msg, prepare-commit-msg — husky, lint-staged, and the like) are
+# commit-msg, prepare-commit-msg - husky, lint-staged, and the like) are
 # bypassed for THIS ONE COMMIT only; every commit a person makes in that repo
 # still runs them.
 #
@@ -52,7 +52,7 @@ done
 # --- read sunstone.conf (optional, grepped never sourced) ------------------
 CONF="$REPO/claude-setup/config/sunstone.conf"
 conf_get() {
-  # conf_get KEY DEFAULT — last matching line wins; an empty value falls back
+  # conf_get KEY DEFAULT - last matching line wins; an empty value falls back
   # to DEFAULT. Rules, identical to readConf() in the .js twin:
   #   - '#' starts a comment only at line start or after whitespace, so a#b
   #     is a value;
@@ -83,7 +83,7 @@ if [ -z "$(git -C "$REPO" status --porcelain -- "$MEM_DIR" 2>/dev/null)" ]; then
   exit 0
 fi
 
-# Refuse to run mid-rebase/merge — committing into that state makes a mess a
+# Refuse to run mid-rebase/merge - committing into that state makes a mess a
 # human then has to unpick.
 GIT_DIR="$(git -C "$REPO" rev-parse --git-dir 2>/dev/null)" || exit 0
 case "$GIT_DIR" in /*) ;; *) GIT_DIR="$REPO/$GIT_DIR" ;; esac
@@ -93,7 +93,7 @@ done
 
 # Refuse on a detached HEAD too. A commit made there is on no branch: the moment
 # the user checks a branch back out the session's memory is gone from the tree,
-# and — the sync hook having no branch to push either — nothing ever recovers
+# and - the sync hook having no branch to push either - nothing ever recovers
 # it. Refusing leaves the files on disk, where the next session picks them up.
 # (An unborn branch is fine: symbolic-ref resolves before the first commit.)
 git -C "$REPO" symbolic-ref -q HEAD >/dev/null 2>&1 || exit 0
@@ -105,28 +105,28 @@ git -C "$REPO" add -- "$MEM_DIR" >/dev/null 2>&1 || exit 0
 git -C "$REPO" diff --cached --quiet -- "$MEM_DIR" 2>/dev/null && exit 0
 
 # Name what changed so the log stays readable without opening the diff.
-# Basenames without .md, joined as 'a, b, c' and capped at 90 characters —
+# Basenames without .md, joined as 'a, b, c' and capped at 90 characters -
 # byte-for-byte what the .js twin produces. (Not `paste -sd', '`: paste
 # CYCLES its delimiter list, giving 'a,b c,d'. Not `xargs basename`: a name
 # with a space would be split in two.)
 #
 # core.quotePath=false because git's default is to octal-escape and double-quote
 # any path that is not pure ASCII, which would put `r\303\251sum\303\251.md"` in the
-# subject line — and the stray closing quote also defeats the `.md` strip.
+# subject line - and the stray closing quote also defeats the `.md` strip.
 STAGED="$(git -C "$REPO" -c core.quotePath=false diff --cached --name-only -- "$MEM_DIR" 2>/dev/null)"
 FILES="$(printf '%s\n' "$STAGED" | sed -e 's#.*/##' -e 's/\.md$//' \
          | awk 'length($0) { s = s (n++ ? ", " : "") $0 } END { print substr(s, 1, 90) }')"
 COUNT="$(printf '%s\n' "$STAGED" | grep -c . 2>/dev/null || echo 0)"
 
 # A failed commit must not leave the memory tree staged. The usual causes are
-# environmental and outlast the session — no committer identity yet, a signing
-# key this non-interactive hook cannot unlock, a locked index — so the staging
+# environmental and outlast the session - no committer identity yet, a signing
+# key this non-interactive hook cannot unlock, a locked index - so the staging
 # would still be there on the user's next commit in that repo, where it is
 # either swept into an unrelated commit or refused outright by the framework's
 # own mixed-staging guard. Put the index back and stay silent: the files are on
 # disk and the next session commits them.
 if ! git -C "$REPO" commit --quiet --no-verify \
-     -m "memory: ${COUNT} file(s) from a session — ${FILES}" \
+     -m "memory: ${COUNT} file(s) from a session - ${FILES}" \
      -- "$MEM_DIR" >/dev/null 2>&1; then
   git -C "$REPO" reset --quiet -- "$MEM_DIR" >/dev/null 2>&1 || true
   exit 0
@@ -136,12 +136,12 @@ fi
 #
 # Detached on purpose: `setsid` where it exists, a plain background subshell
 # otherwise. The hook returns immediately either way, so a hung or absent
-# network cannot make ending a session feel slow — the failure mode that made
+# network cannot make ending a session feel slow - the failure mode that made
 # this hook refuse to touch the network in the first place.
 #
 # Bounded twice over: GIT_TERMINAL_PROMPT=0 so a credential prompt cannot wait
 # on a stdin nobody is watching, and a hard kill after PUSH_TIMEOUT. `timeout`
-# is not on stock macOS, so gtimeout and then a self-watchdog stand in for it —
+# is not on stock macOS, so gtimeout and then a self-watchdog stand in for it -
 # the same ladder ai-memory-sync.sh climbs.
 #
 # --no-verify is deliberate: the framework's own pre-push guard is interactive
@@ -149,7 +149,7 @@ fi
 # guard still covers every push a human makes.
 #
 # ⛔ Only the current branch, never --force, never a new remote. If the push is
-# rejected — diverged, no upstream, no remote at all — that is the normal case
+# rejected - diverged, no upstream, no remote at all - that is the normal case
 # and the next SessionStart handles it properly, with a pull first.
 PUSH_TIMEOUT="${SUNSTONE_PUSH_TIMEOUT:-20}"
 
@@ -169,7 +169,7 @@ push_bounded() {
 }
 
 # `trap '' HUP` rather than setsid or nohup: the subshell has to outlive this
-# hook, and ignoring SIGHUP is all that takes — no second interpreter to hand
+# hook, and ignoring SIGHUP is all that takes - no second interpreter to hand
 # the function to, and nothing that behaves differently across platforms.
 ( trap '' HUP; push_bounded ) >/dev/null 2>&1 &
 
