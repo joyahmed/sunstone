@@ -68,13 +68,9 @@ macOS on 2026-09-12 (Apple Silicon, `/bin/bash` 3.2, Xcode's `git`/`python3`): e
 to check after a first run on any new machine.
 
 ⛔ **`setup.ps1` does not parse under Windows PowerShell 5.1** — the `powershell` that ships with
-Windows. It needs `pwsh` (PowerShell 7), which is a separate install. This is recorded first-hand
-on Joy's Windows machine and is the first thing to hit anyone who runs the documented
-`powershell -ExecutionPolicy Bypass -File setup.ps1` line, so use `pwsh` in its place. What
-partially *has* run there: `setup.sh`'s hook-install path (`C:/Users/Joy/.git-hooks/` exists with
-`core.hooksPath` set) and the memory-hook install on 2026-09-07 (`ai-memory-sync.js`,
-`ai-memory-commit.js`, `~/.claude/ai-memory-path`). So the Windows story is "partly installed by
-hand", not "installer verified".
+Windows. It needs `pwsh` (PowerShell 7), which is a separate install. It is the first thing to hit
+anyone who runs `powershell -ExecutionPolicy Bypass -File setup.ps1`, so use `pwsh` in its place;
+[Windows](#windows) says where to get it.
 
 ## Prerequisites
 
