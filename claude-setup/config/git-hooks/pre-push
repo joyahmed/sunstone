@@ -1,0 +1,187 @@
+#!/bin/sh
+# Global pre-push — installed via core.hooksPath, so it covers every repo on
+# this machine, the ones that already exist and any cloned later.
+#
+# PURPOSE: the framework repo and the personal memory repo are written by
+# SEVERAL assistant sessions at once. A history rewrite there does not just
+# inconvenience one clone — it strands whatever another live session has
+# already committed. This hook refuses any push that would
+# rewrite or delete remote history in the guarded repos. Every other repo is
+# untouched. The framework protects itself: a remote whose basename is
+# "super-ai" is guarded even when no ~/.claude/ai-memory-path (and so no
+# config) exists on the machine.
+#
+# WHICH REPOS: the space-separated GUARDED_REPOS list in
+#   <personal-repo>/claude-setup/config/super-ai.conf
+# where <personal-repo> is the single line in ~/.claude/ai-memory-path (or
+# $HOME/.ai-memory when that file is missing and the directory is a git repo).
+# Default when the key is absent: "super-ai <basename of the personal repo's
+# origin URL>". When no personal repo can be found at all, the list is just
+# "super-ai" — the guard never silently vanishes on a half-set-up machine.
+#
+# ⚠️ Git does NOT tell a pre-push hook whether --force was passed. There is no
+# flag to read. So we detect the EFFECT instead: a push is a rewrite when the
+# remote's current tip is not an ancestor of what we are about to send. A plain
+# push that fails this test would be rejected by the server anyway, which means
+# anything reaching here in that state is a force push.
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+REMOTE_URL="$2"
+REPO=$(basename "${REMOTE_URL%.git}" 2>/dev/null)
+
+# --- locate the personal repo and its optional config -----------------------
+# Read the URL-derived name, never the directory name: a clone whose remote was
+# renamed keeps living in a folder called by the OLD name, so folder names lie.
+repo_name_of() {
+	url=$(git -C "$1" remote get-url origin 2>/dev/null) || url=""
+	[ -z "$url" ] && url="$1"
+	basename "${url%.git}" 2>/dev/null
+}
+
+PERSONAL=""
+PATH_FILE="${HOME}/.claude/ai-memory-path"
+if [ -f "$PATH_FILE" ]; then
+	# TRIM the line, never delete whitespace from it: a checkout path may contain
+	# spaces, and `tr -d '[:space:]'` would turn "my memory" into "mymemory".
+	PERSONAL=$(head -n1 "$PATH_FILE" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+fi
+[ -n "$PERSONAL" ] && [ ! -e "$PERSONAL/.git" ] && PERSONAL=""
+[ -z "$PERSONAL" ] && [ -e "$HOME/.ai-memory/.git" ] && PERSONAL="$HOME/.ai-memory"
+
+CONF=""
+[ -n "$PERSONAL" ] && CONF="$PERSONAL/claude-setup/config/super-ai.conf"
+
+# conf_get KEY DEFAULT — POSIX KEY=VALUE lines. The parsing rule is the
+# framework's and every reader of super-ai.conf shares it:
+# '#' starts a comment only at line start or after whitespace (so "a#b" is the
+# value a#b, "#b" is the value #b, while "a #b" is the value a); a value may be
+# double-quoted and the surrounding quotes are stripped (a '#' inside them is
+# part of the value); surrounding whitespace is TRIMMED, never deleted from
+# inside a value. Last occurrence wins; an empty value falls back to DEFAULT.
+# ⚠️ Whitespace around '=' is accepted (`KEY = value`), which is the documented
+# format: all nine readers converged on it. Two readers of one config file
+# disagreeing about a line is how a guard goes quiet without anyone noticing.
+# ⛔ Never `. "$CONF"`: the file is user content and sourcing it would execute
+# whatever it contains. grep/sed and parameter expansion only.
+conf_get() {
+	line=""
+	[ -n "$CONF" ] && [ -f "$CONF" ] && line=$(grep -E "^[[:space:]]*$1[[:space:]]*=" "$CONF" 2>/dev/null | tail -n1)
+	if [ -z "$line" ]; then
+		printf '%s' "$2"
+		return
+	fi
+	# ⚠️ The value's leading whitespace has to SURVIVE until the comment rule has
+	# run, because that rule is what distinguishes them: KEY=#x is the value #x,
+	# KEY= #x is a comment. So test the quote on a trimmed copy and trim the
+	# value itself only at the end.
+	v=${line#*=}
+	case "$(printf '%s' "$v" | sed 's/^[[:space:]]*//')" in
+		\"*) v=$(printf '%s' "$v" | sed -e 's/^[[:space:]]*"//' -e 's/".*$//') ;;
+		*)   v=$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') ;;
+	esac
+	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
+}
+
+# ⚠️ The built-in default is "super-ai" plus ONE more name — the personal repo's
+# — and a repo name may contain a space (a checkout at ".../my notes", or an
+# origin URL with one). Folding that name into the space-separated list would
+# word-split it, which silently leaves the memory repo UNGUARDED while guarding
+# every unrelated repo whose name matches a fragment of it. So the default is
+# built by comparing each part whole, and only a list the user wrote
+# deliberately is word-split — which also keeps an explicit GUARDED_REPOS able
+# to drop "super-ai", exactly as the docs promise.
+GUARDED_REPOS=$(conf_get GUARDED_REPOS "")
+
+GUARDED=0
+if [ -z "$GUARDED_REPOS" ]; then
+	# The framework guards itself even on a machine with no personal repo and so
+	# no config at all — the guard never silently vanishes on a half-set-up box.
+	[ "$REPO" = "super-ai" ] && GUARDED=1
+	if [ -n "$PERSONAL" ] && [ -n "$REPO" ] && [ "$(repo_name_of "$PERSONAL")" = "$REPO" ]; then
+		GUARDED=1
+	fi
+else
+	for name in $GUARDED_REPOS; do
+		[ "$name" = "$REPO" ] && GUARDED=1
+	done
+fi
+
+# ⚠️ stdin must be buffered. We read it to inspect the refs, but a repo-local
+# pre-push chained at the end expects to read that same stream unconsumed.
+STDIN_COPY=$(mktemp) || exit 1
+cat > "$STDIN_COPY"
+trap 'rm -f "$STDIN_COPY"' EXIT
+
+if [ "$GUARDED" = "1" ]; then
+	# Escape hatch. A guard with no way out gets deleted rather than obeyed —
+	# this makes overriding deliberate and visible instead of impossible.
+	if [ -n "$ALLOW_FORCE_PUSH" ]; then
+		printf '⚠️  pre-push: ALLOW_FORCE_PUSH set — history rewrite permitted on %s\n' "$REPO" >&2
+	else
+		ZERO='^0*$'
+		BLOCKED=0
+
+		while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+			[ -z "$LOCAL_REF" ] && continue
+
+			# Deleting a remote branch.
+			if printf '%s' "$LOCAL_SHA" | grep -qE "$ZERO"; then
+				printf '⛔ pre-push: refusing to DELETE %s on %s\n' "$REMOTE_REF" "$REPO" >&2
+				BLOCKED=1
+				continue
+			fi
+
+			# Brand-new branch — nothing on the remote to rewrite.
+			printf '%s' "$REMOTE_SHA" | grep -qE "$ZERO" && continue
+
+			# Cannot judge what we do not have. Rare, and safer to stop than guess.
+			if ! git cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null; then
+				printf '⛔ pre-push: %s is unknown locally — run `git fetch` before pushing to %s\n' "$REMOTE_SHA" "$REPO" >&2
+				BLOCKED=1
+				continue
+			fi
+
+			# THE TEST: is the remote tip still reachable from what we are sending?
+			if ! git merge-base --is-ancestor "$REMOTE_SHA" "$LOCAL_SHA" 2>/dev/null; then
+				printf '⛔ pre-push: this would REWRITE history on %s (%s)\n' "$REPO" "$REMOTE_REF" >&2
+				printf '   Remote tip %s is not an ancestor of %s\n' "$(git rev-parse --short "$REMOTE_SHA")" "$(git rev-parse --short "$LOCAL_SHA")" >&2
+				BLOCKED=1
+			fi
+		done < "$STDIN_COPY"
+
+		if [ "$BLOCKED" = "1" ]; then
+			printf '\n   %s is written by several assistant sessions at once; a rewrite strands\n' "$REPO" >&2
+			printf '   commits another live session has already made.\n\n' >&2
+			printf '   Integrate instead:  git pull --rebase origin <branch> && git push\n' >&2
+			printf '   Genuinely intended: ALLOW_FORCE_PUSH=1 git push ...\n' >&2
+			printf '   Change the list:    GUARDED_REPOS in claude-setup/config/super-ai.conf\n\n' >&2
+			exit 1
+		fi
+	fi
+fi
+
+# ⛔ core.hooksPath makes git IGNORE $GIT_DIR/hooks entirely, so a repo that
+# installs its own hook there would be silently disabled. Chain to it instead.
+# Resolve with --git-dir, never `--git-path hooks` — that OBEYS core.hooksPath
+# and returns this directory, so the hook execs itself and hangs every push.
+GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+LOCAL="$GIT_DIR_PATH/hooks/pre-push"
+
+case "$(CDPATH= cd -- "$(dirname -- "$LOCAL")" 2>/dev/null && pwd)" in
+	"$HERE") exit 0 ;;
+esac
+
+# ⚠️ exec REPLACES this shell, so the EXIT trap that would delete the buffered
+# stdin never fires and the temp file is leaked on every push into a repo that
+# has its own hook. Open it first, unlink it, then hand the already-open
+# descriptor over as the child's stdin: the file is gone from the filesystem the
+# moment we let go of it, and closing fd 3 keeps the child's inherited
+# descriptors exactly as they would have been.
+if [ -x "$LOCAL" ]; then
+	exec 3< "$STDIN_COPY"
+	rm -f "$STDIN_COPY"
+	exec "$LOCAL" "$@" <&3 3<&-
+fi
+
+exit 0

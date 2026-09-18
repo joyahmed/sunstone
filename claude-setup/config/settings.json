@@ -1,0 +1,38 @@
+{
+  "$comment": "Portable template merged into ~/.claude/settings.json by setup via merge-settings-template.py/.mjs: hook entries are appended per event unless an entry already runs the same script (matched by basename), statusLine is copied only if absent, env variables only where absent, and permissions is never touched. 'permissions.allow' is deliberately empty and never merged: the live allowlist is machine-specific (absolute paths, and it can accumulate secrets typed into commands), so it rebuilds itself as you approve tools. Commands use ~ so the same file works in any home directory; setup installs the scripts to ~/.claude and ~/.claude/hooks. env.DISABLE_AUTOUPDATER keeps Claude Code from replacing itself underneath a session and from fighting whatever package manager installed it; the merger sets it only where you have not defined it yourself, and deleting the key from ~/.claude/settings.json restores automatic updates. The statusLine key names a script both installers copy to ~/.claude — whoever merges this template installs statusline-command.sh too, or the key ends up pointing at a file that is not on disk. It needs jq at runtime and renders empty without it; deleting statusLine from ~/.claude/settings.json turns it off. The PreToolUse hint only fires in repos that have graphify-out/graph.json; the cache-heal hook exits at once when the context-mode plugin is not installed. The ai-memory-sync / memory-doctor-notice / ai-memory-commit hooks are registered by merge-ai-memory-hook.py (Linux/macOS) or merge-claude-settings.mjs (Windows), not listed here.",
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline-command.sh"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": [],
+    "ask": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(python3 -c \"import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); case \"$CMD\" in *grep*|*rg\\ *|*ripgrep*|*find\\ *|*fd\\ *|*ack\\ *|*ag\\ *)   [ -f graphify-out/graph.json ] &&   echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}'   || true ;; esac"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/context-mode-cache-heal.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

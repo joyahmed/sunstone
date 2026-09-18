@@ -1,0 +1,245 @@
+#!/bin/sh
+# Global pre-commit — installed via core.hooksPath, so it reaches every repo on
+# this machine. It guards only the memory repos, and it ALWAYS chains to the
+# repo's own .git/hooks/pre-commit afterwards — guarded repo or not, on every
+# path except the one that refuses the commit — so husky, lint-staged and
+# pre-commit.com keep running exactly as they did before it was installed.
+#
+# PURPOSE: the personal memory repo is written by SEVERAL assistant sessions at
+# once. The failure mode that nothing else catches is a session running
+# `git add -A` and sweeping another session's uncommitted edits into its own
+# commit. ⛔ That produces a perfectly valid FAST-FORWARD push, so the
+# server's non-fast-forward check never fires and a rebase never conflicts —
+# it is invisible by construction. Nothing is lost and nothing is
+# mangled, but the changes end up filed under a stranger's commit message and
+# `git log` stops explaining them.
+#
+# THE RULE: the framework's convention is that memory commits stage the memory
+# tree (MEMORY_DIR, default claude-setup/memory) BY PATH. So a commit touching
+# both that tree and anything outside it contradicts the repo's own convention.
+# That makes the test deterministic — no file-count threshold, no guessing at
+# intent.
+#
+# WHICH REPOS: the space-separated MEMORY_REPOS list in
+#   <personal-repo>/claude-setup/config/super-ai.conf
+# where <personal-repo> is the single line in ~/.claude/ai-memory-path (or
+# $HOME/.ai-memory when that file is missing and the directory is a git repo).
+# Default when the key is absent: the basename of the personal repo's origin
+# URL, or of its checkout directory when it has no origin. When no personal
+# repo can be found, nothing is guarded and this hook is a no-op everywhere —
+# there is no memory tree to protect.
+#
+# ⚠️ ALWAYS CHAINS, guarded repo or not. Setting a global core.hooksPath makes
+# git ignore every repo's .git/hooks, and `pre-commit` is the hook real
+# projects actually install (husky, lint-staged, commitlint, pre-commit.com).
+# If the unguarded repos exited here without chaining, running setup.sh would
+# silently switch off every one of those hooks on the machine. So every exit
+# path below goes through chain_local, exactly as pre-push does — the memory
+# guard is an extra check in front of the repo's own hook, never a replacement
+# for it. Repos with no local hook are unaffected: chain_local finds nothing
+# and exits 0.
+#
+# ⚠️ INSTALLATION IS A COPY, NOT A PULL. Source of truth is
+# claude-setup/config/git-hooks/pre-commit in super-ai; the live copy is
+# ~/.git-hooks/pre-commit. **Pulling the repo does not update the live copy** —
+# re-run setup.sh, or copy it in by hand. Otherwise a hook can sit in the repo
+# while ~/.git-hooks has no copy of it, and a guard that is missing on one
+# machine looks installed from every other one.
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# chain_local — hand over to the repo's own .git/hooks/pre-commit, then exit.
+# ⛔ core.hooksPath makes git IGNORE $GIT_DIR/hooks entirely, so a repo-local
+# hook would be silently disabled. Chain to it instead. Resolve with
+# --git-dir, never `--git-path hooks` — that OBEYS core.hooksPath and returns
+# THIS directory, so the hook execs itself and hangs every commit.
+# Every "nothing to do here" path in this file ends in chain_local, never a
+# bare `exit 0`, so an unguarded repo keeps its own hook.
+chain_local() {
+	GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+	LOCAL="$GIT_DIR_PATH/hooks/pre-commit"
+
+	# Belt and braces: never chain to ourselves even if the paths ever coincide.
+	case "$(CDPATH= cd -- "$(dirname -- "$LOCAL")" 2>/dev/null && pwd)" in
+		"$HERE") exit 0 ;;
+	esac
+
+	[ -x "$LOCAL" ] && exec "$LOCAL" "$@"
+	exit 0
+}
+
+# pre-commit receives no arguments and no stdin, so unlike pre-push the remote
+# URL has to be read rather than handed over. Prefer the URL over the directory
+# name: a clone whose remote was renamed keeps living in a folder called by the
+# OLD name, so folder names lie.
+REMOTE_URL=$(git config --get remote.origin.url 2>/dev/null)
+REPO=$(basename "${REMOTE_URL%.git}" 2>/dev/null)
+
+# ⚠️ No origin at all — a local-only memory repo. There is no renamed remote to
+# be misled by here, so fall back to the worktree's own directory name, which is
+# EXACTLY what repo_name_of() below falls back to. Without this the two
+# derivations disagree: the derived default (and an explicitly configured
+# MEMORY_REPOS entry) could never match an empty REPO, so a remote-less memory
+# repo was silently unguarded.
+if [ -z "$REPO" ]; then
+	TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+	[ -n "$TOP" ] && REPO=$(basename "$TOP")
+fi
+
+# --- locate the personal repo and its optional config -----------------------
+repo_name_of() {
+	url=$(git -C "$1" remote get-url origin 2>/dev/null) || url=""
+	[ -z "$url" ] && url="$1"
+	basename "${url%.git}" 2>/dev/null
+}
+
+PERSONAL=""
+PATH_FILE="${HOME}/.claude/ai-memory-path"
+if [ -f "$PATH_FILE" ]; then
+	# TRIM the line, never delete whitespace from it: a checkout path may contain
+	# spaces, and `tr -d '[:space:]'` would turn "my memory" into "mymemory".
+	PERSONAL=$(head -n1 "$PATH_FILE" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+fi
+[ -n "$PERSONAL" ] && [ ! -e "$PERSONAL/.git" ] && PERSONAL=""
+[ -z "$PERSONAL" ] && [ -e "$HOME/.ai-memory/.git" ] && PERSONAL="$HOME/.ai-memory"
+
+# No personal repo → nothing to guard. This is the fast path for every commit
+# on a machine that never ran setup: straight to the repo's own hook.
+[ -z "$PERSONAL" ] && chain_local "$@"
+
+CONF="$PERSONAL/claude-setup/config/super-ai.conf"
+
+# conf_get KEY DEFAULT — POSIX KEY=VALUE lines. The parsing rule is the
+# framework's and every reader of super-ai.conf shares it:
+# '#' starts a comment only at line start or after whitespace (so "a#b" is the
+# value a#b, "#b" is the value #b, while "a #b" is the value a); a value may be
+# double-quoted and the surrounding quotes are stripped (a '#' inside them is
+# part of the value); surrounding whitespace is TRIMMED, never deleted from
+# inside a value. Last occurrence wins; an empty value falls back to DEFAULT.
+# ⚠️ Whitespace around '=' is accepted (`KEY = value`), which is the documented
+# format: all nine readers converged on it. A guard that read a different
+# MEMORY_DIR than the hook it is guarding would be worse than useless — it
+# would go quiet on exactly the tree being written.
+# ⛔ Never `. "$CONF"`: the file is user content and sourcing it would execute
+# whatever it contains. grep/sed and parameter expansion only.
+conf_get() {
+	line=""
+	[ -f "$CONF" ] && line=$(grep -E "^[[:space:]]*$1[[:space:]]*=" "$CONF" 2>/dev/null | tail -n1)
+	if [ -z "$line" ]; then
+		printf '%s' "$2"
+		return
+	fi
+	# ⚠️ The value's leading whitespace has to SURVIVE until the comment rule has
+	# run, because that rule is what distinguishes them: KEY=#x is the value #x,
+	# KEY= #x is a comment. So test the quote on a trimmed copy and trim the
+	# value itself only at the end.
+	v=${line#*=}
+	case "$(printf '%s' "$v" | sed 's/^[[:space:]]*//')" in
+		\"*) v=$(printf '%s' "$v" | sed -e 's/^[[:space:]]*"//' -e 's/".*$//') ;;
+		*)   v=$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//') ;;
+	esac
+	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
+}
+
+# Only derive the personal repo's name when the config does not name the list
+# outright — that keeps the common case to one grep and no extra git call.
+# ⚠️ The derived default is exactly ONE name, and a repo name may contain a
+# space (a checkout at ".../my notes", or an origin URL with one). Folding it
+# into the space-separated list would word-split it, which silently leaves the
+# memory repo UNGUARDED while guarding every unrelated repo whose name happens
+# to match a fragment of it. So compare the derived name whole, and word-split
+# only a list the user wrote deliberately.
+MEMORY_REPOS=$(conf_get MEMORY_REPOS "")
+
+GUARDED=0
+if [ -z "$MEMORY_REPOS" ]; then
+	[ -n "$REPO" ] && [ "$(repo_name_of "$PERSONAL")" = "$REPO" ] && GUARDED=1
+else
+	for name in $MEMORY_REPOS; do
+		[ "$name" = "$REPO" ] && GUARDED=1
+	done
+fi
+# Not a memory repo → no guard, but still the repo's own hook.
+[ "$GUARDED" = "1" ] || chain_local "$@"
+
+# The memory tree prefix, relative to the repo root. Trailing slashes are
+# stripped so "a/b/" and "a/b" mean the same thing.
+MEMORY_DIR=$(conf_get MEMORY_DIR "claude-setup/memory")
+MEMORY_DIR=${MEMORY_DIR%/}
+MEMORY_DIR=${MEMORY_DIR#./}
+[ -z "$MEMORY_DIR" ] && MEMORY_DIR="claude-setup/memory"
+
+# ⚠️ Mid-merge, cherry-pick, revert or rebase: the staged set is one GIT put
+# together, not a session running `git add -A`, so the failure this guard exists
+# to catch cannot be what is happening. Refusing here would hand the user a
+# blocked commit at the worst possible moment — halfway through resolving a
+# conflict — for a commit they did not compose. Same markers the SessionEnd
+# commit hook checks, so the two agree on what "git is busy" means.
+GIT_STATE_DIR=$(git rev-parse --git-dir 2>/dev/null)
+IN_PROGRESS=0
+if [ -n "$GIT_STATE_DIR" ]; then
+	for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD rebase-merge rebase-apply; do
+		[ -e "$GIT_STATE_DIR/$marker" ] && IN_PROGRESS=1
+	done
+fi
+
+if [ -n "$ALLOW_MIXED_COMMIT" ] || [ "$IN_PROGRESS" = "1" ]; then
+	if [ -n "$ALLOW_MIXED_COMMIT" ]; then
+		printf '⚠️  pre-commit: ALLOW_MIXED_COMMIT set — mixed staging permitted on %s\n' "$REPO" >&2
+	fi
+else
+	# --no-renames on purpose: moving a file OUT of the memory tree should count
+	# as touching both sets. With rename detection on, git reports only the
+	# destination and the guard would miss it.
+	# core.quotePath=false keeps non-ASCII paths readable rather than \xNN.
+	if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+		STAGED=$(git -c core.quotePath=false diff --cached --name-only --no-renames)
+	else
+		# Initial commit: no HEAD to diff against, so diff against the empty tree.
+		EMPTY_TREE=$(git hash-object -t tree /dev/null)
+		STAGED=$(git -c core.quotePath=false diff --cached --name-only --no-renames "$EMPTY_TREE")
+	fi
+
+	# ⚠️ Guard the empty case explicitly. Feeding "" through the classifier
+	# below yields one blank line, and a blank line is not under the memory
+	# prefix — so an empty staging area would look like a non-memory change
+	# and refuse every `git commit --amend`-style no-op.
+	if [ -n "$STAGED" ]; then
+		# Classify by prefix with `case`, not grep: MEMORY_DIR is user config and
+		# may contain regex metacharacters ('.', '+'), which would need escaping
+		# for every grep flavour. A glob match needs none.
+		MEM=""
+		OTHER=""
+		while IFS= read -r path; do
+			[ -z "$path" ] && continue
+			case "$path" in
+				"$MEMORY_DIR"/*) MEM="${MEM}${path}
+" ;;
+				*)               OTHER="${OTHER}${path}
+" ;;
+			esac
+		done <<EOF
+$STAGED
+EOF
+
+		if [ -n "$MEM" ] && [ -n "$OTHER" ]; then
+			printf '⛔ pre-commit: refusing a MIXED commit on %s\n\n' "$REPO" >&2
+			printf '   Memory paths staged:\n' >&2
+			printf '%s' "$MEM"   | sed 's/^/     /' >&2
+			printf '\n   Non-memory paths staged:\n' >&2
+			printf '%s' "$OTHER" | sed 's/^/     /' >&2
+			printf '\n   %s is written by several assistant sessions at once, and `git add -A`\n' "$REPO" >&2
+			printf '   sweeping another session'"'"'s uncommitted edits into this commit looks\n' >&2
+			printf '   exactly like this. Memory commits stage %s BY PATH;\n' "$MEMORY_DIR" >&2
+			printf '   separate the other edits into their own commit.\n\n' >&2
+			printf '     git restore --staged <the paths that are not yours>\n' >&2
+			printf '     git commit -- %s\n\n' "$MEMORY_DIR" >&2
+			printf '   Genuinely one change: ALLOW_MIXED_COMMIT=1 git commit ...\n' >&2
+			printf '   Change the list/tree: MEMORY_REPOS / MEMORY_DIR in claude-setup/config/super-ai.conf\n\n' >&2
+			exit 1
+		fi
+	fi
+fi
+
+# Guard passed (or explicitly waived) — now the repo's own hook gets its turn.
+chain_local "$@"

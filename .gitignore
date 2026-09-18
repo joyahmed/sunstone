@@ -1,0 +1,7 @@
+.opencode/
+graphify-out/
+__pycache__/
+*.pyc
+
+# macOS Finder metadata; a public repo should never carry it.
+.DS_Store
