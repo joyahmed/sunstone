@@ -126,9 +126,10 @@ the `powershell` that ships with Windows**, which cannot parse the script - and 
 
 Twelve steps, run once from the framework root and again from your memory repo. In summary:
 
-- **eight hook scripts** in `~/.claude/hooks/` - `ai-memory-sync` and `ai-memory-commit` (each with
-  its Node port), `memory-doctor-notice.sh`, `context-mode-cache-heal.mjs`, and supermode's
-  `ctx-gauge.mjs` and `context-guard.mjs` - producing five registered entries in
+- **ten hook scripts** in `~/.claude/hooks/` - `ai-memory-sync` and `ai-memory-commit` (each with
+  its Node port), `memory-doctor-notice.sh`, `context-mode-cache-heal.mjs`, supermode's
+  `ctx-gauge.mjs` and `context-guard.mjs`, and `say.sh` / `say.ps1` (supermode speaks one
+  sentence per slice; silent where the machine cannot speak) - producing five registered entries in
   `~/.claude/settings.json`: the three memory hooks, plus the settings template's own `PreToolUse`
   and `SessionStart` pair. The two supermode scripts are **not** registered there: they run only
   in a session launched as supermode (next bullet);
@@ -272,7 +273,8 @@ sunstone/
         │   ├── memory-doctor-notice.sh       # SessionStart notice
         │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
         │   ├── ctx-gauge.mjs                 # supermode: fronts your status line, writes the %
-        │   └── context-guard.mjs             # supermode: PostToolUse checkpoint nudge from 70%
+        │   ├── context-guard.mjs             # supermode: PostToolUse checkpoint nudge from 70%
+        │   └── say.sh / say.ps1              # supermode: "<slice> is done. Taking up <next>."
         ├── git-hooks/
         │   ├── pre-commit                    # mixed-staging guard
         │   └── pre-push                      # force-push guard

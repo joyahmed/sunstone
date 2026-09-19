@@ -27,6 +27,13 @@ own. For each:
    what is blocked, with the exact numbers a fresh session cannot re-derive (commit hashes,
    test counts, the failing case), and the work-queue row moved. You cannot see your own
    context gauge; the handoff is written every time so the last one is always current.
+5. **Say it** - the person is not watching the terminal, so tell them out loud, once per
+   slice, right after the handoff: `bash ~/.claude/hooks/say.sh "<what landed> is done.
+   Taking up <what is next>."` One sentence, plain words, under twenty of them - a name
+   for the slice, not a diff. Also once when something needs them (`"Stopping: <why>."`)
+   and once at the end (`"Supermode is done. <n> commits. <what is queued for you>."`).
+   The script is silent when the machine cannot speak; never wait on it, never skip a
+   slice because it is missing.
 
 ## The context rule - hand off, never compact
 
@@ -64,4 +71,5 @@ count in each checkpoint note.
 
 The last thing a supermode run writes, in the handoff and in the session's final message:
 commits landed (hashes, one line each), what is green, what is queued for the person and
-why, risks noticed. Numbers, not adjectives.
+why, risks noticed. Numbers, not adjectives. Then say the one-sentence version out loud
+(step 5).
