@@ -126,12 +126,13 @@ the `powershell` that ships with Windows**, which cannot parse the script - and 
 
 Twelve steps, run once from the framework root and again from your memory repo. In summary:
 
-- **ten hook scripts** in `~/.claude/hooks/` - `ai-memory-sync` and `ai-memory-commit` (each with
-  its Node port), `memory-doctor-notice.sh`, `context-mode-cache-heal.mjs`, supermode's
-  `ctx-gauge.mjs` and `context-guard.mjs`, and `say.sh` / `say.ps1` (supermode speaks one
-  sentence per slice; silent where the machine cannot speak) - producing five registered entries in
-  `~/.claude/settings.json`: the three memory hooks, plus the settings template's own `PreToolUse`
-  and `SessionStart` pair. The two supermode scripts are **not** registered there: they run only
+- **eleven hook scripts** in `~/.claude/hooks/` - `ai-memory-sync` and `ai-memory-commit` (each with
+  its Node port), `memory-doctor-notice.sh`, `session-bus-notice.js`, `context-mode-cache-heal.mjs`,
+  supermode's `ctx-gauge.mjs` and `context-guard.mjs`, and `say.sh` / `say.ps1` (supermode speaks
+  one sentence per slice; silent where the machine cannot speak) - producing six registered entries
+  in `~/.claude/settings.json`: the three memory hooks, plus the settings template's own `PreToolUse`
+  entry and its two `SessionStart` entries (the cache heal and the session bus, the latter inert
+  until `BUS_DIR` is set). The two supermode scripts are **not** registered there: they run only
   in a session launched as supermode (next bullet);
 - **supermode** - `~/.claude/supermode.settings.json`, the `supermode` launcher in
   `~/.local/bin/`, and two slash commands, `/supermode` and `/supercode`, in
@@ -186,6 +187,7 @@ header comment carries the same reasoning at the point of use.
 | `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, runs the repo's optional `claude-setup/session-start.d/*` scripts, then injects `MEMORY_FILE` - plus whatever those scripts printed - as context. Every network call and every script is time-bounded. See [session-start.d](claude-setup/SETUP.md#session-startd-scripts-the-memory-repo-runs-on-every-machine). |
 | `ai-memory-commit` | Claude Code **SessionEnd** | Commits anything changed under `MEMORY_DIR`, staged **by path** and nothing else, with `--no-verify`; then fires a detached, time-bounded push and returns without waiting for it. Refuses to run at all mid-merge, mid-cherry-pick, mid-rebase or on a detached HEAD. |
 | `memory-doctor-notice` | Claude Code **SessionStart** | Injects a short notice from `memory-doctor --brief` - a summary line plus up to three WARN lines - at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
+| `session-bus-notice` | Claude Code **SessionStart** | Off until `BUS_DIR` is set. Announces, once, every other machine's outbox in the memory repo that has changed since it was last announced - see [The session bus](#the-session-bus). |
 | `pre-commit` | git, via global `core.hooksPath` | In `MEMORY_REPOS`, refuses a commit that stages paths both inside and outside `MEMORY_DIR`. Stands down entirely while git is mid-merge, cherry-pick, revert or rebase. Override: `ALLOW_MIXED_COMMIT=1 git commit`. |
 | `pre-push` | git, via global `core.hooksPath` | In `GUARDED_REPOS`, refuses any push that is not a fast-forward, any branch deletion, and any push whose remote tip is not in the local object store at all. Override: `ALLOW_FORCE_PUSH=1 git push`. |
 
@@ -243,6 +245,40 @@ Both WARNs are part of the `--brief` notice the SessionStart hook injects, so a 
 past its cap is mentioned at the start of a session rather than discovered at the end of a month.
 A `QUEUE_FILE` that names a missing file, or a queue with no matching heading, is a WARN too.
 
+## The session bus
+
+Two machines of one user - a laptop and a desktop, the WSL side and the Windows side of one box -
+share the memory repo but not a terminal. The session bus lets a session on one side leave a note
+the next session on the other side will see, with nothing but the repo in between. Off until you
+set it up; two `sunstone.conf` keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BUS_DIR` | unset = **off** | The bus directory, relative to the memory repo (`claude-setup/bus`, say). |
+| `BUS_SIDE` | detected | This machine's side name. Detection: `windows` on Windows, `mac` on macOS, `wsl` when `/proc/version` mentions Microsoft, else `linux`. Set it when two machines would detect the same name. |
+
+**The protocol.** `BUS_DIR/outbox-<side>.md`, one writer per file: a machine writes **only its own**
+outbox, newest entry at the top under a `## <stamp> - <subject>` heading, then commits that file
+by path and pushes. (The memory repo's commit hook only commits `MEMORY_DIR`; a bus entry is a
+commit you or the session make on purpose, `git add <BUS_DIR>/outbox-<side>.md && git commit`.)
+The other side sees it at its next SessionStart, because `ai-memory-sync` pulled first.
+
+**The hook.** `session-bus-notice.js` runs at SessionStart, registered by the settings template
+after the sync hook on both platforms (Node, no dependencies). For every `outbox-*.md` in `BUS_DIR`
+that is not this side's own, it compares the file's git blob hash with the last one it announced,
+kept under `~/.claude/session-bus/<file>.seen`, and when they differ it injects one line:
+
+```
+📬 session bus: outbox-windows.md has a new entry - "2026-09-21 10:00 - please pull the fonts branch"
+```
+
+The quoted part is the file's first `## ` heading. It is silent when `BUS_DIR` is unset or the
+directory is missing, when nothing changed, when a file it has never seen is empty, and on every
+failure. Claude Code may start SessionStart hooks together, so a message that arrives in the very
+same pull can be announced one session late; nothing is lost, because the comparison is against
+what is on disk. The `.seen` files are machine-local by design - each machine keeps its own
+record of what it has been told.
+
 ## Supermode and supercode
 
 Two ways of working that ship as procedures, not as defaults. Neither changes an ordinary
@@ -299,6 +335,7 @@ sunstone/
         │   ├── ai-memory-sync.sh / .js       # SessionStart (sh on POSIX, js on Windows)
         │   ├── ai-memory-commit.sh / .js     # SessionEnd
         │   ├── memory-doctor-notice.sh       # SessionStart notice
+        │   ├── session-bus-notice.js         # SessionStart: another machine's outbox changed (BUS_DIR)
         │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
         │   ├── ctx-gauge.mjs                 # supermode: fronts your status line, writes the %
         │   ├── context-guard.mjs             # supermode: PostToolUse checkpoint nudge from 70%

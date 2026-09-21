@@ -1,5 +1,5 @@
 {
-  "$comment": "Portable template merged into ~/.claude/settings.json by setup via merge-settings-template.py/.mjs: hook entries are appended only when no entry under that event already runs the same script (matched by basename), and no other key is copied. It carries ONLY what the memory layer needs. Preferences about your editor, your statusline or another tool's auto-updater are not the framework's to set on your machine - put those in your own memory repo's claude-setup/config/settings.json, which is merged after this one and wins.",
+  "$comment": "Portable template merged into ~/.claude/settings.json by setup via merge-settings-template.py/.mjs: hook entries are appended only when no entry under that event already runs the same script (matched by basename), and no other key is copied. It carries ONLY what the memory layer needs. Order matters for SessionStart: setup registers ai-memory-sync before this template is merged, so session-bus-notice.js (off until BUS_DIR is set in sunstone.conf) lands after the pull that brings the other machine's outbox. Preferences about your editor, your statusline or another tool's auto-updater are not the framework's to set on your machine - put those in your own memory repo's claude-setup/config/settings.json, which is merged after this one and wins.",
   "permissions": {
     "allow": [],
     "deny": [],
@@ -23,6 +23,10 @@
           {
             "type": "command",
             "command": "node ~/.claude/hooks/context-mode-cache-heal.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/session-bus-notice.js"
           }
         ]
       }

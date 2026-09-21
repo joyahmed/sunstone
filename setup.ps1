@@ -929,5 +929,7 @@ Write-Host '    PROJECT_ROOTS=""                            dirs projects live u
 Write-Host '    QUEUE_FILE=""                               a markdown work queue; set, memory-doctor checks its NOW table'
 Write-Host '    QUEUE_NOW_HEADING=""                        its NOW heading (default: the first H2 containing "NOW")'
 Write-Host '    QUEUE_NOW_MAX=3                             rows the NOW table may hold'
+Write-Host '    BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on'
+Write-Host '    BUS_SIDE=""                                 this machine''s side (default: windows/mac/wsl/linux, detected)'
 Write-Host ""
 Write-Host "Restart Claude Code to pick up the hooks."

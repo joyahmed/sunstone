@@ -789,6 +789,8 @@ cat <<'CONF'
     QUEUE_FILE=""                               a markdown work queue; set, memory-doctor checks its NOW table
     QUEUE_NOW_HEADING=""                        its NOW heading (default: the first H2 containing "NOW")
     QUEUE_NOW_MAX=3                             rows the NOW table may hold
+    BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on
+    BUS_SIDE=""                                 this machine's side (default: windows/mac/wsl/linux, detected)
 CONF
 echo ""
 echo "Restart Claude Code to pick up the hooks."

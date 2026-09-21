@@ -132,7 +132,7 @@ clutter - the same rule the per-file copy helper applies.
 | `~/.claude/hooks/*` | `claude-setup/config/hooks/*` under either root | Overlay step, `chmod +x`. Copied only: a memory-repo hook is registered solely by the memory repo's `settings.json` template. From the framework root this lands the two supermode scripts too, `ctx-gauge.mjs` and `context-guard.mjs` - registered by `supermode.settings.json` (next two rows), never by `settings.json`. |
 | `~/.claude/supermode.settings.json` | `claude-setup/config/supermode.settings.json` under either root | Overlay step, plain copy. The settings a supermode session runs under - `autoCompactEnabled: false`, `statusLine` → `ctx-gauge.mjs`, `PostToolUse` → `context-guard.mjs`. Reaches a session only through the launcher's `claude --settings`; it is never merged into `~/.claude/settings.json`. See [Supermode](#supermode). |
 | `~/.local/bin/supermode` | `claude-setup/bin/supermode` under either root | Overlay step, `chmod +x`. The launcher: `SUPERMODE=1 exec claude --settings ~/.claude/supermode.settings.json "$@"`. Setup notes when `~/.local/bin` is not on `PATH`; it does not edit your shell profile. On Windows the twin is `claude-setup\bin\supermode.ps1` → `~\.claude\bin\supermode.ps1`. |
-| `~/.claude/settings.json` (again) | `claude-setup/config/settings.json` under either root, via `merge-settings-template.py` - or `merge-settings-template.mjs` under `node` when there is no `python3` | Overlay step, after the memory-hook registration above. Framework template merged first, memory repo's second; see [The template merger](#the-template-merger). The framework's template contributes exactly two hook entries and no other key: a `PreToolUse` hint on `Bash` and a `SessionStart` entry for `context-mode-cache-heal.mjs`. It carries **no `statusLine` and no `env`** - those are preferences, and belong in your own template, which is merged after this one. Skipped, with a note, only when the machine has neither interpreter. |
+| `~/.claude/settings.json` (again) | `claude-setup/config/settings.json` under either root, via `merge-settings-template.py` - or `merge-settings-template.mjs` under `node` when there is no `python3` | Overlay step, after the memory-hook registration above. Framework template merged first, memory repo's second; see [The template merger](#the-template-merger). The framework's template contributes exactly three hook entries and no other key: a `PreToolUse` hint on `Bash`, and two `SessionStart` entries, `context-mode-cache-heal.mjs` and `session-bus-notice.js` (inert until `BUS_DIR` is set). Because this merge runs after the memory hooks were registered, the bus notice lands after `ai-memory-sync` in the `SessionStart` list. It carries **no `statusLine` and no `env`** - those are preferences, and belong in your own template, which is merged after this one. Skipped, with a note, only when the machine has neither interpreter. |
 | `~/.claude/CLAUDE.md` | `claude-setup/config/CLAUDE.global.md` under either root | Overlay step - but the framework ships this file, so **a plain `setup.sh` writes it on every run, `--skip-overlay` included**. A `~/.claude/CLAUDE.md` of your own is replaced, backed up first as `CLAUDE.md.bak.<timestamp>`; a memory repo that carries its own copy wins over the framework's. Keep anything you want to survive a re-run in the memory repo's copy, not in the installed file. |
 
 `setup.sh` creates the target directories it needs if they do not exist. It installs no
@@ -561,6 +561,8 @@ unguarded by word-splitting.
 | `QUEUE_FILE` | empty (check off) | `memory-doctor` only: a markdown work queue, relative to the memory repo. Set, it turns on the **queue** check - see [The work-queue check](../README.md#the-work-queue-check). |
 | `QUEUE_NOW_HEADING` | empty | `memory-doctor` only: the H2 that opens the queue's NOW section, with or without the leading `## `. Empty: the first H2 whose text contains `NOW`, case-insensitive. |
 | `QUEUE_NOW_MAX` | `3` | `memory-doctor` only: the rows the NOW table may hold before the doctor calls it a wish list. |
+| `BUS_DIR` | unset (bus off) | `session-bus-notice.js`: the session-bus directory, relative to the memory repo, holding one `outbox-<side>.md` per machine - see [The session bus](../README.md#the-session-bus). |
+| `BUS_SIDE` | detected: `windows`, `mac`, `wsl` or `linux` | `session-bus-notice.js`: this machine's side name, i.e. which outbox is its own and is never announced. |
 
 Repo names are the basename of `git remote get-url origin` with `.git` stripped. The URL is
 preferred over the directory name because a clone whose remote was renamed keeps living in a
@@ -590,6 +592,7 @@ MEMORY_META_FILES="TEMPLATE.md CHANGELOG.md"   # structure inside notes/, not me
 PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores may be found
 QUEUE_FILE=WORK-QUEUE.md                       # turns on the work-queue check
 QUEUE_NOW_MAX=3
+BUS_DIR=claude-setup/bus                       # turns on the session bus
 ```
 
 ### Guard semantics
@@ -934,10 +937,10 @@ rm -f ~/.claude/git-config.previous
 
 # 2. Claude Code: the hook scripts and the state files. Setup ships the whole
 #    claude-setup/config/hooks/ directory, not just the three memory hooks, so
-#    all eight go here. A personal root may have added more - see Overlay
+#    all nine go here. A personal root may have added more - see Overlay
 #    residue below.
 for h in ai-memory-sync.sh ai-memory-sync.js ai-memory-commit.sh ai-memory-commit.js \
-         memory-doctor-notice.sh context-mode-cache-heal.mjs ctx-gauge.mjs context-guard.mjs; do
+         memory-doctor-notice.sh session-bus-notice.js context-mode-cache-heal.mjs ctx-gauge.mjs context-guard.mjs; do
   rm -f ~/.claude/hooks/$h
 done
 # Supermode: the layered settings file, the launcher, the two commands, and the
@@ -955,6 +958,7 @@ rm -f ~/.claude/statusline-command.sh ~/.claude/statusline-command.js
 # The two subagent files (model: sonnet by default).
 rm -f ~/.claude/agents/architect.md ~/.claude/agents/verify.md
 rm -f ~/.claude/ai-memory-path ~/.claude/sunstone-path ~/.claude/.memory-doctor-last ~/.claude/.memory-doctor-off
+rm -rf ~/.claude/session-bus                # what the session-bus notice has already announced
 
 # 3. The global CLAUDE.md setup replaced (every run rewrites it from CLAUDE.global.md)
 ls ~/.claude/CLAUDE.md.bak.* 2>/dev/null    # mv the newest one back to ~/.claude/CLAUDE.md,
@@ -966,8 +970,8 @@ Then edit `~/.claude/settings.json` and remove what setup merged in: the two `Se
 entries (`ai-memory-sync.sh`, `memory-doctor-notice.sh`) and the `SessionEnd` entry
 (`ai-memory-commit.sh`), whose shape is in
 [Registering the hooks by hand](#registering-the-hooks-by-hand); and, from the shipped template,
-the third `SessionStart` entry (`context-mode-cache-heal.mjs`) and the `PreToolUse` entry on
-`Bash`. That is the whole of it: the shipped template carries no `statusLine` and no `env` key, so
+the two further `SessionStart` entries (`context-mode-cache-heal.mjs`, `session-bus-notice.js`)
+and the `PreToolUse` entry on `Bash`. That is the whole of it: the shipped template carries no `statusLine` and no `env` key, so
 anything of either kind in the file is yours or your memory repo's template's - including an
 `env.DISABLE_AUTOUPDATER`, which older versions of this framework did merge in. `permissions` was
 never touched, so leave it. If the file did not exist before setup ran, the merge created it, and
