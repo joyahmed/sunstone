@@ -213,7 +213,35 @@ node claude-setup/scripts/memory-doctor.js --brief    # a short notice, or nothi
 Read-only, and exit code 1 when there is an ERROR, so it works as a CI or pre-push gate. It
 checks the **wiring**, the **sync** state, the memory **index**, file **hygiene**, the
 machine-local **working tier**, per-project **repo stores** and **duplicates** across stores -
-[what each check catches](claude-setup/SETUP.md#checking-it-still-works).
+[what each check catches](claude-setup/SETUP.md#checking-it-still-works). One more check is
+off until you switch it on:
+
+#### The work-queue check
+
+If you keep a work queue as a markdown file in your memory repo - a table of what is being worked
+on now, under a heading - the doctor can keep it honest. Three `sunstone.conf` keys, all read by
+`memory-doctor` only:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `QUEUE_FILE` | empty = **off** | The queue file, relative to the memory repo (`WORK-QUEUE.md`, say). |
+| `QUEUE_NOW_HEADING` | empty = the first `## ` heading whose text contains `NOW`, case-insensitive | The H2 that opens the NOW section, with or without the `## `. |
+| `QUEUE_NOW_MAX` | `3` | How many rows the NOW table may hold. |
+
+The NOW section runs from that heading to the next `#`/`##` heading; its rows are the lines in it
+that start with `|`, minus the separator rows (`|---|`) and the header row above each one. Two
+things raise a WARN, never an ERROR, so the exit code is unchanged:
+
+- more rows than `QUEUE_NOW_MAX`: `QUEUE: NOW has 5 rows (max 3); a longer NOW is a wish list`;
+- a row whose **last cell** carries a date that has passed: `QUEUE: NOW row dated 2026-09-01 is
+  in the past`, followed by the first 60 characters of the row. Only two forms are read, on
+  purpose: an ISO `YYYY-MM-DD` date, and the literal word `yesterday` (`today` is recognised and
+  is not past). `Mon D`-style dates are not parsed, so a queue that wants the check to fire writes
+  the ISO form.
+
+Both WARNs are part of the `--brief` notice the SessionStart hook injects, so a NOW that has grown
+past its cap is mentioned at the start of a session rather than discovered at the end of a month.
+A `QUEUE_FILE` that names a missing file, or a queue with no matching heading, is a WARN too.
 
 ## Supermode and supercode
 

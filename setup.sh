@@ -786,6 +786,9 @@ cat <<'CONF'
     GUARDED_REPOS="sunstone <repo-name>"        repos with the force-push guard
     MEMORY_META_FILES=""                        files in MEMORY_DIR that are structure, not memories
     PROJECT_ROOTS=""                            dirs projects live under (memory-doctor slug resolution)
+    QUEUE_FILE=""                               a markdown work queue; set, memory-doctor checks its NOW table
+    QUEUE_NOW_HEADING=""                        its NOW heading (default: the first H2 containing "NOW")
+    QUEUE_NOW_MAX=3                             rows the NOW table may hold
 CONF
 echo ""
 echo "Restart Claude Code to pick up the hooks."

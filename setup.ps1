@@ -926,5 +926,8 @@ Write-Host '    MEMORY_REPOS="<repo-name>"                  repos with the mixed
 Write-Host '    GUARDED_REPOS="sunstone <repo-name>"        repos with the force-push guard'
 Write-Host '    MEMORY_META_FILES=""                        files in MEMORY_DIR that are structure, not memories'
 Write-Host '    PROJECT_ROOTS=""                            dirs projects live under (memory-doctor slug resolution)'
+Write-Host '    QUEUE_FILE=""                               a markdown work queue; set, memory-doctor checks its NOW table'
+Write-Host '    QUEUE_NOW_HEADING=""                        its NOW heading (default: the first H2 containing "NOW")'
+Write-Host '    QUEUE_NOW_MAX=3                             rows the NOW table may hold'
 Write-Host ""
 Write-Host "Restart Claude Code to pick up the hooks."

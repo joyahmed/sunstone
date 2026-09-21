@@ -33,6 +33,13 @@
  *                           the immediate children of each root, and a slug that
  *                           lands under a root promotes to that project's
  *                           docs/ai-memory/. Empty keeps slug resolution only.
+ *   QUEUE_FILE         ""   a markdown work queue, relative to the repo. Set, it
+ *                           turns on the queue check: the table under the NOW
+ *                           heading must stay short and must not hold rows whose
+ *                           last cell carries a date already gone by.
+ *   QUEUE_NOW_HEADING  ""   the H2 that opens the NOW section. Empty: the first
+ *                           H2 whose text contains "now", case-insensitive.
+ *   QUEUE_NOW_MAX      3    rows the NOW table may hold before it is a wish list.
  *
  * Usage:
  *   node claude-setup/scripts/memory-doctor.js            # human report
@@ -90,6 +97,11 @@ const CONF_DEFAULTS = {
   // "nothing extra" and is the documented default.
   MEMORY_META_FILES: '',
   PROJECT_ROOTS: '',
+  // The work-queue check. Off until QUEUE_FILE names a file; the other two
+  // only shape it. QUEUE_NOW_MAX is read as an integer, anything else → 3.
+  QUEUE_FILE: '',
+  QUEUE_NOW_HEADING: '',
+  QUEUE_NOW_MAX: '3',
   // Read here ONLY to diagnose. The two git guards (pre-commit, pre-push) are
   // the components that act on these; memory-doctor never enforces them. It
   // reads them because a guard that silently stops guarding is the one failure
@@ -593,6 +605,96 @@ function checkIndex() {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. the work queue - a NOW section that only grows is a wish list
+// ---------------------------------------------------------------------------
+
+/**
+ * Off unless QUEUE_FILE is set. The file is markdown; the NOW section is the
+ * H2 named by QUEUE_NOW_HEADING (or the first H2 containing "now") up to the
+ * next H1/H2, and its rows are the table lines in it - lines starting with
+ * '|', minus every separator row (|---|) and the header row above each one.
+ *
+ * Two things are worth a WARN and nothing here is an ERROR:
+ *   - more rows than QUEUE_NOW_MAX: a NOW that holds everything prioritises
+ *     nothing;
+ *   - a row whose LAST cell carries a date that has passed. Only two forms are
+ *     read, on purpose: ISO YYYY-MM-DD, and the literal word "yesterday"
+ *     ("today" is recognised and is not past). "Mon D" and friends are not
+ *     parsed - a queue that wants the check to fire writes the ISO form.
+ */
+function checkQueue() {
+  const rel = String(CONF.QUEUE_FILE || '').replace(/^\.\//, '');
+  if (!rel) return;
+  const file = path.join(REPO, ...rel.split('/'));
+  const text = read(file);
+  if (text === null) {
+    warn('queue', `QUEUE: ${rel} is named by QUEUE_FILE but does not exist in ${path.basename(REPO)}.`);
+    return;
+  }
+
+  const max = /^\d+$/.test(String(CONF.QUEUE_NOW_MAX)) ? parseInt(CONF.QUEUE_NOW_MAX, 10) : 3;
+  const wantHeading = String(CONF.QUEUE_NOW_HEADING || '').replace(/^#+\s*/, '').trim();
+  const lines = text.split(/\r?\n/);
+
+  let start = -1;
+  let headingText = '';
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^##\s+(.*?)\s*$/.exec(lines[i]);
+    if (!m) continue;
+    if (wantHeading ? m[1].trim() === wantHeading : /now/i.test(m[1])) { start = i; headingText = m[1].trim(); break; }
+  }
+  if (start === -1) {
+    warn('queue', wantHeading
+      ? `QUEUE: no "## ${wantHeading}" heading in ${rel} (QUEUE_NOW_HEADING).`
+      : `QUEUE: no H2 heading containing "NOW" in ${rel} - set QUEUE_NOW_HEADING to name it.`);
+    return;
+  }
+
+  // The section body: up to the next H1 or H2.
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##?\s/.test(lines[i])) { end = i; break; }
+  }
+  const isSep = (l) => /^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(l.trim());
+  const rows = [];
+  for (let i = start + 1; i < end; i++) {
+    const l = lines[i];
+    if (!l.trim().startsWith('|')) continue;
+    if (isSep(l)) continue;
+    if (i + 1 < end && isSep(lines[i + 1])) continue; // the header row above a separator
+    rows.push(l.trim());
+  }
+  stats.queueNowRows = rows.length;
+  stats.queueNowMax = max;
+
+  const short = (r) => (r.length > 60 ? r.slice(0, 60) : r);
+  if (rows.length > max) {
+    // No items on purpose: this WARN reaches the SessionStart notice, and the
+    // count is the point - the rows are one `cat` away.
+    warn('queue', `QUEUE: NOW has ${rows.length} rows (max ${max}); a longer NOW is a wish list. ` +
+      `Section "${headingText}" of ${rel}.`);
+  }
+
+  // The last cell: strip the outer pipes, split, take the tail.
+  const today = new Date();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const todayIso = iso(today);
+  for (const r of rows) {
+    const cells = r.replace(/^\|/, '').replace(/\|$/, '').split('|');
+    const last = (cells[cells.length - 1] || '').trim();
+    let past = null;
+    const m = /\b(\d{4}-\d{2}-\d{2})\b/.exec(last);
+    if (m && m[1] < todayIso) past = m[1];
+    else if (/\byesterday\b/i.test(last)) past = 'yesterday';
+    if (past) {
+      // The row goes in items, not the message: --brief cuts a message at its
+      // first " - ", and a row's text may well contain one.
+      warn('queue', `QUEUE: NOW row dated ${past} is in the past`, [short(r)]);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 5. file hygiene - frontmatter, name/filename agreement, wikilinks
 // ---------------------------------------------------------------------------
 
@@ -981,10 +1083,12 @@ function report() {
     const errs = findings.filter((f) => f.level === 'ERROR');
     const undrained = stats.undrained || 0;
     // WARNs that the docs promise the notice will raise: an installed hook
-    // that drifted from the framework copy (the pull-without-setup case) and
-    // index parity (a file written but unreachable). Sync/duplicate WARNs stay
-    // in the full report - they are advisory and would make the notice noisy.
-    const BRIEF_WARN_CHECKS = new Set(['wiring', 'index']);
+    // that drifted from the framework copy (the pull-without-setup case),
+    // index parity (a file written but unreachable) and the work queue (a NOW
+    // that has grown past its cap or holds a date gone by). Sync/duplicate
+    // WARNs stay in the full report - they are advisory and would make the
+    // notice noisy.
+    const BRIEF_WARN_CHECKS = new Set(['wiring', 'index', 'queue']);
     const warns = findings.filter((f) => f.level === 'WARN' && BRIEF_WARN_CHECKS.has(f.check));
     // Silence is the goal state. Nothing to say once the stores are drained
     // and the wiring is sound - this stops being noise instead of becoming
@@ -1140,6 +1244,7 @@ function report() {
 checkHooks();
 checkSync();
 const { files } = checkIndex();
+checkQueue();
 const syncedMeta = checkFiles(files);
 const workingMeta = checkWorkingTier();
 const repoMeta = checkRepoStores();

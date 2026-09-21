@@ -558,6 +558,9 @@ unguarded by word-splitting.
 | `MEMORY_INDEX` | `claude-setup/memory/MEMORY.md` | `memory-doctor`: the index whose links are checked against the files in `MEMORY_DIR`. |
 | `MEMORY_META_FILES` | empty | `memory-doctor` only: space-separated basenames inside `MEMORY_DIR` that are structure rather than memories (a template, a changelog). They are never reported as unindexed and never counted as memory files. The basenames of `MEMORY_INDEX` and `MEMORY_FILE`, plus `README.md`, are always treated this way, whether or not they are listed. Space-separated, so a filename containing a space cannot be listed; a value written with a directory part still counts by its basename. |
 | `PROJECT_ROOTS` | empty | `memory-doctor` only: space-separated directories, `~` allowed, under which the doctor may look for `<project>/docs/ai-memory/` repo stores when a working-tier slug resolves to a project inside one of them. Empty keeps the slug resolution the doctor does today and adds no scanning. Space-separated, so a directory whose path contains a space cannot be listed. A listed directory that does not exist on this machine is reported as INFO, not an error - the same conf is meant to be shared across machines. |
+| `QUEUE_FILE` | empty (check off) | `memory-doctor` only: a markdown work queue, relative to the memory repo. Set, it turns on the **queue** check - see [The work-queue check](../README.md#the-work-queue-check). |
+| `QUEUE_NOW_HEADING` | empty | `memory-doctor` only: the H2 that opens the queue's NOW section, with or without the leading `## `. Empty: the first H2 whose text contains `NOW`, case-insensitive. |
+| `QUEUE_NOW_MAX` | `3` | `memory-doctor` only: the rows the NOW table may hold before the doctor calls it a wish list. |
 
 Repo names are the basename of `git remote get-url origin` with `.git` stripped. The URL is
 preferred over the directory name because a clone whose remote was renamed keeps living in a
@@ -585,6 +588,8 @@ MEMORY_REPOS="my-memory"
 GUARDED_REPOS="sunstone my-memory team-notes"
 MEMORY_META_FILES="TEMPLATE.md CHANGELOG.md"   # structure inside notes/, not memories
 PROJECT_ROOTS="~/src ~/work"                   # where docs/ai-memory/ stores may be found
+QUEUE_FILE=WORK-QUEUE.md                       # turns on the work-queue check
+QUEUE_NOW_MAX=3
 ```
 
 ### Guard semantics
@@ -695,6 +700,7 @@ otherwise, so it works as a pre-push or CI gate.
 | **working-tier** | Files left in `~/.claude/projects/<slug>/memory/`, which syncs nowhere, with the store each one should be promoted to. |
 | **repo-store** | `docs/ai-memory/` files never committed, or sitting outside a git repo. |
 | **duplicates** | One slug living in two stores, and near-duplicates by name + description overlap. |
+| **queue** | Off unless `QUEUE_FILE` is set: a NOW table longer than `QUEUE_NOW_MAX`, or a NOW row whose last cell carries an ISO date (or the word `yesterday`) that has passed. WARN only. |
 
 The **wiring** check covers `ai-memory-sync` and `ai-memory-commit` (either the `.sh` or the
 `.js` port counts as installed); it does not check the notice hook.
