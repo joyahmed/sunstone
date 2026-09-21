@@ -7,6 +7,29 @@
 # Shell scripts checked out as CRLF also fail under bash (`bad interpreter`).
 #
 # eol=lf overrides core.autocrlf, so a Windows checkout stays LF too.
-# This repo currently contains no binary files; add explicit `binary` rules here
-# before committing any (images, audio, archives, fonts).
+# Binary files need an explicit `binary` rule below: `text=auto` guesses from
+# content, and a wrong guess corrupts the file on checkout.
 * text=auto eol=lf
+
+# Find drift with:    git ls-files --eol | grep 'w/crlf' | grep -v 'eol=crlf'
+# Check one file:     git check-attr text eol -- <path>
+
+# Windows-native formats that must stay CRLF (cmd.exe misreads LF batch files).
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.reg  text eol=crlf
+
+# Binary: never normalise, never diff as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.woff  binary
+*.woff2 binary
+*.db    binary
+*.sqlite binary
