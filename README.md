@@ -70,7 +70,7 @@ WSL; `setup.ps1` covers native Windows and is described under
 | **Linux** | `setup.sh` | Nothing in particular. This is the most-exercised path. |
 | **WSL** | `setup.sh` | Treated as Linux, and it is one - a WSL checkout is a Linux checkout. Only the Windows side of the same machine needs `setup.ps1`, and only if you also run Claude Code natively there. |
 | **macOS** | `setup.sh` | No `python3` (it arrives with the Xcode command line tools), so the settings template is merged by `node` instead; no `timeout`, so the SessionStart hook bounds git itself rather than running unbounded. `/bin/bash` is 3.2 - nothing here uses a bash 4 feature. BSD `date`, `readlink` and `sort` differ from GNU and each use falls back. |
-| **Windows** | `setup.ps1` | No `python3`, so the two session hooks install as their Node ports (`node` is required for them, and - with no `python3` here - for the `settings.json` template merge too; the git hooks, global `CLAUDE.md` and subagent files land without it). The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell - nothing extra to install. |
+| **Windows** | `setup.ps1` | No `python3`, so the three session hooks install as their Node ports (`node` is required for them, and - with no `python3` here - for the `settings.json` template merge too; the git hooks, global `CLAUDE.md` and subagent files land without it). Nothing the settings template registers needs `python3` either: the graphify hint is a Node script that runs only when a graph, the script and `node` are all present. The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell - nothing extra to install. |
 
 ✅ **Honest status.** All four platforms are verified by running the installer end to end. macOS
 was the last, on 2026-09-12 (Apple Silicon, macOS 26 / Darwin 25, `/bin/bash` 3.2, `/usr/bin/git`
@@ -126,13 +126,13 @@ the `powershell` that ships with Windows**, which cannot parse the script - and 
 
 Twelve steps, run once from the framework root and again from your memory repo. In summary:
 
-- **eleven hook scripts** in `~/.claude/hooks/` - `ai-memory-sync` and `ai-memory-commit` (each with
-  its Node port), `memory-doctor-notice.sh`, `session-bus-notice.js`, `context-mode-cache-heal.mjs`,
-  supermode's `ctx-gauge.mjs` and `context-guard.mjs`, and `say.sh` / `say.ps1` (supermode speaks
-  one sentence per slice; silent where the machine cannot speak) - producing six registered entries
-  in `~/.claude/settings.json`: the three memory hooks, plus the settings template's own `PreToolUse`
-  entry and its two `SessionStart` entries (the cache heal and the session bus, the latter inert
-  until `BUS_DIR` is set). The two supermode scripts are **not** registered there: they run only
+- **thirteen hook scripts** in `~/.claude/hooks/` - `ai-memory-sync`, `ai-memory-commit` and
+  `memory-doctor-notice` (each with its Node port), `session-bus-notice.js`, `graphify-nudge.mjs`,
+  `context-mode-cache-heal.mjs`, supermode's `ctx-gauge.mjs` and `context-guard.mjs`, and `say.sh`
+  / `say.ps1` (supermode speaks one sentence per slice; silent where the machine cannot speak) -
+  producing six registered entries in `~/.claude/settings.json`: the three memory hooks, plus the
+  settings template's own `PreToolUse` entry (the graphify nudge) and its two `SessionStart`
+  entries (the cache heal and the session bus, the latter inert until `BUS_DIR` is set). The two supermode scripts are **not** registered there: they run only
   in a session launched as supermode (next bullet);
 - **supermode** - `~/.claude/supermode.settings.json`, the `supermode` launcher in
   `~/.local/bin/`, and two slash commands, `/supermode` and `/supercode`, in
@@ -365,8 +365,9 @@ sunstone/
         ├── hooks/
         │   ├── ai-memory-sync.sh / .js       # SessionStart (sh on POSIX, js on Windows)
         │   ├── ai-memory-commit.sh / .js     # SessionEnd
-        │   ├── memory-doctor-notice.sh       # SessionStart notice
+        │   ├── memory-doctor-notice.sh / .js # SessionStart notice (sh on POSIX, js on Windows)
         │   ├── session-bus-notice.js         # SessionStart: another machine's outbox changed (BUS_DIR)
+        │   ├── graphify-nudge.mjs            # PreToolUse: the graphify hint; no python3 needed
         │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
         │   ├── ctx-gauge.mjs                 # supermode: fronts your status line, writes the %
         │   ├── context-guard.mjs             # supermode: PostToolUse checkpoint nudge from 70%

@@ -199,12 +199,14 @@ the third bullet, that still ships from this root.
 
   ⚠️ **This one is not finished.** Two third-party hooks still ship from this root, in
   `claude-setup/config/settings.json`: a `PreToolUse` hint on `Bash` that points grep-style
-  searches at `graphify-out/GRAPH_REPORT.md`, and a `SessionStart` entry running
-  `context-mode-cache-heal.mjs`. The first injects prose about graphify into the model's context
-  whenever a graph exists; the second requires `node` and a tool the framework does not install.
-  Both are inert without their tool, but neither is the memory layer, and by the reasoning above
-  both belong in a personal template rather than here. Delete the two entries from
-  `~/.claude/settings.json` if you do not use those tools.
+  searches at `graphify-out/GRAPH_REPORT.md` (`graphify-nudge.mjs`, run only when
+  `graphify-out/graph.json`, the script and `node` are all present - it used to be an inline
+  `python3 -c` pipeline, which assumed `python3` on every machine and does not on Windows), and a
+  `SessionStart` entry running `context-mode-cache-heal.mjs`. The first injects prose about
+  graphify into the model's context whenever a graph exists; the second requires `node` and a tool
+  the framework does not install. Both are inert without their tool, but neither is the memory
+  layer, and by the reasoning above both belong in a personal template rather than here. Delete
+  the two entries from `~/.claude/settings.json` if you do not use those tools.
 
 ⚠️ **The `statusLine` key and the statusline script must ship from the same root.** This is not a
 style rule; it is the most-reported bug in this repo's history. The framework's settings template
@@ -352,8 +354,7 @@ Rules, applied idempotently: for each event under the template's `hooks`, append
 no entry under that event already runs - matched either by the **exact command string** or, when
 the command names a script, by that **script's basename** (the same two-part identity rule
 `merge-ai-memory-hook.py` uses, so a `~`-relative and an absolute path to one script count as one
-hook, and the framework's own `PreToolUse` entry - an inline `python3 -c` pipeline naming no
-script - is matched by its command string alone); copy `statusLine` and `env` keys only where the target has none, and likewise any other
+hook, and a command naming no script at all is matched by its command string alone); copy `statusLine` and `env` keys only where the target has none, and likewise any other
 top-level key whose template value is a **scalar** (`autoCompactEnabled: false`, say) - copied
 only when the target lacks the key, so a value set by hand on a machine is never overridden;
 objects and arrays other than those three are not copied, and `$comment` never is - a
@@ -729,8 +730,15 @@ cd sunstone && git pull && ./setup.sh
 **A `git pull` of this repo changes nothing that runs.** Every hook executes from a copy under
 `~/.claude/hooks/`, `~/.git-hooks/` or `~/.git-templates/hooks/`. Until `setup.sh` runs again,
 the installed copy is the old one, and the framework will look installed from every angle except
-the one that matters. `memory-doctor`'s **wiring** check reports the drift as a WARN. If you do
-not want to re-run the whole script, copy the changed file into place by hand and `chmod +x` it.
+the one that matters. `memory-doctor`'s **wiring** and **drift** checks report the drift as a
+WARN. If you do not want to re-run the whole script, copy the changed file into place by hand and
+`chmod +x` it.
+
+One thing a re-run does not do is *remove* a template entry that changed shape. The template
+merger only appends, so a machine set up before the graphify hint became `graphify-nudge.mjs`
+keeps the older `PreToolUse` entry - the one beginning `CMD=$(python3 -c` - beside the new one.
+It is harmless (it swallows its own errors) but dead; delete it from `~/.claude/settings.json`
+by hand.
 
 ---
 
@@ -793,9 +801,9 @@ bullet, one thing that is deliberately *not* one, because this file used to clai
 - Windows ships neither `python3` nor a POSIX shell for Claude Code hooks, so the Claude Code
   hooks are installed as their Node ports, `ai-memory-sync.js` and `ai-memory-commit.js`, and
   Node is required. They read the same `ai-memory-path`, the same `sunstone.conf`, and behave
-  identically. The doctor notice has no Node port shipped today, so `setup.ps1` installs the
-  POSIX `memory-doctor-notice.sh` and registers it as `bash "...\memory-doctor-notice.sh"`, run by
-  Git for Windows' shell; it prefers a `.js` port whenever one is shipped beside it.
+  identically. The doctor notice is the third: `memory-doctor-notice.js`, the Node port of the
+  POSIX script, installed and registered as `node "...\memory-doctor-notice.js"` (an older
+  checkout that shipped no `.js` port fell back to the `.sh`, run by Git for Windows' shell).
   `memory-doctor` itself can always be run by hand.
 - **Supermode on Windows** is the same two Node scripts (they have no shell dependency) plus
   `~\.claude\bin\supermode.ps1` in place of `~/.local/bin/supermode`; `setup.ps1` prints a note
@@ -939,10 +947,11 @@ rm -f ~/.claude/git-config.previous
 
 # 2. Claude Code: the hook scripts and the state files. Setup ships the whole
 #    claude-setup/config/hooks/ directory, not just the three memory hooks, so
-#    all nine go here. A personal root may have added more - see Overlay
+#    all eleven go here. A personal root may have added more - see Overlay
 #    residue below.
 for h in ai-memory-sync.sh ai-memory-sync.js ai-memory-commit.sh ai-memory-commit.js \
-         memory-doctor-notice.sh session-bus-notice.js context-mode-cache-heal.mjs ctx-gauge.mjs context-guard.mjs; do
+         memory-doctor-notice.sh memory-doctor-notice.js session-bus-notice.js graphify-nudge.mjs \
+         context-mode-cache-heal.mjs ctx-gauge.mjs context-guard.mjs; do
   rm -f ~/.claude/hooks/$h
 done
 # Supermode: the layered settings file, the launcher, the two commands, and the
@@ -1029,6 +1038,6 @@ Codex / OpenCode trees - `setup.sh` writes too, from the same sources. (It has n
 deleted as dead; nothing installs one, and a stale `~/.claude/statusline.sh` on your machine came
 from an older version and can go.) Either way you can instead restore the
 `settings.json.bak.<timestamp>` left when a merge changed something. On Windows the files are
-`~\.claude\hooks\ai-memory-sync.js`, `ai-memory-commit.js` and `memory-doctor-notice.sh` - plus,
+`~\.claude\hooks\ai-memory-sync.js`, `ai-memory-commit.js` and `memory-doctor-notice.js` - plus,
 only if a root shipped `claude-setup/config/statusline-command.js`,
 `~\.claude\statusline-command.js` and the `statusLine` key `setup.ps1` then set in `settings.json`.
