@@ -98,8 +98,31 @@ install_copy() {
   if [ -e "$dst" ] && ! cmp -s "$src" "$dst"; then
     backup "$dst"
   fi
+  # A symlink left by an earlier LINK_CLAUDE_MD=1 run (below) is replaced by
+  # the copy, never written THROUGH: cp onto a link that points at <src>
+  # itself fails with "same file", and one that points elsewhere would
+  # overwrite that file instead of this destination.
+  [ -L "$dst" ] && rm -f "$dst"
   mkdir -p "$(dirname "$dst")"
   cp "$src" "$dst"
+}
+
+# install_link <src> <dst> - make <dst> a symlink to <src>, so editing the
+# live file IS editing the repo file (LINK_CLAUDE_MD=1 in sunstone.conf; the
+# two CLAUDE.md files only). A <dst> that already is that link is left alone.
+# Anything else there - the copy an earlier run made, a hand-written file, a
+# link elsewhere - is backed up first when its content differs from <src>,
+# then replaced by the link.
+install_link() {
+  local src="$1" dst="$2"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    cmp -s "$src" "$dst" || backup "$dst"
+    rm -f "$dst"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+  echo "  linked: $dst → $src"
 }
 
 # install_file <src> <dst> - install_copy, then mark <dst> executable.
@@ -424,6 +447,29 @@ if [ "$SKIP_OVERLAY" != "1" ]; then
   [ "$OVERLAY_ROOT" = "$SCRIPT_DIR" ] && OVERLAY_ROOT=""
 fi
 
+# ── Keys in sunstone.conf that change how setup itself installs ─────
+# Read from the memory repo resolved above, or from the one already recorded
+# when this run was told to leave it alone (--skip-memory, --skip-overlay).
+#
+# LINK_CLAUDE_MD=1: ~/.claude/CLAUDE.md and ~/CLAUDE.md are installed as
+# SYMLINKS to their repo sources rather than as copies, so editing the live
+# file is editing the repo file and git status says so - the drift that
+# memory-doctor's `drift` check otherwise reports cannot happen. POSIX only:
+# setup.ps1 ignores the key (a symlink on Windows needs Developer Mode or an
+# elevated shell), and the doctor covers the copies there. Off by default:
+# a link into a checkout is a surprise on a machine that later moves it.
+CONF_REPO="${MEMORY_REPO:-$OVERLAY_ROOT}"
+if [ -z "$CONF_REPO" ]; then
+  CONF_REPO="$(read_path_file "$PATH_FILE")"
+  [ -n "$CONF_REPO" ] && [ -d "$CONF_REPO" ] || CONF_REPO=""
+fi
+CLAUDE_MD_MODE=""
+if [ -n "$CONF_REPO" ] && [ "$(conf_get "$CONF_REPO" LINK_CLAUDE_MD "")" = "1" ]; then
+  CLAUDE_MD_MODE="l"
+  echo "  LINK_CLAUDE_MD=1: ~/CLAUDE.md and ~/.claude/CLAUDE.md will be symlinks to their repo sources"
+  echo ""
+fi
+
 INSTALLED=""   # comma list of the steps that installed something from the current root
 OVERRIDDEN=0   # files of the current step that a later root ships too
 LAST_ROOT=""   # the root applied last; set before the roots are applied
@@ -447,9 +493,10 @@ step_end() {
   OVERRIDDEN=0
 }
 
-# ship <root> <rel> <dst> [x] - install <root>/<rel> at <dst> (executable with
-# "x") unless a LATER root ships the same <rel>: the last root wins without the
-# earlier copy landing first, which would back the file up on every run.
+# ship <root> <rel> <dst> [x|l] - install <root>/<rel> at <dst> (executable
+# with "x", as a symlink with "l") unless a LATER root ships the same <rel>:
+# the last root wins without the earlier copy landing first, which would back
+# the file up on every run.
 # Returns 0 installed, 1 not shipped by this root, 2 overridden.
 ship() {
   local root="$1" rel="$2" dst="$3" mode="${4:-}"
@@ -458,7 +505,11 @@ ship() {
     OVERRIDDEN=$((OVERRIDDEN + 1))
     return 2
   fi
-  if [ "$mode" = "x" ]; then install_file "$root/$rel" "$dst"; else install_copy "$root/$rel" "$dst"; fi
+  case "$mode" in
+    x) install_file "$root/$rel" "$dst" ;;
+    l) install_link "$root/$rel" "$dst" ;;
+    *) install_copy "$root/$rel" "$dst" ;;
+  esac
 }
 
 # ship_dir <root> <rel-dir> <dst-dir> <glob> [x] - ship every matching regular
@@ -516,12 +567,17 @@ step_agents() {
   if ship "$root" agents/AGENTS.md "$HOME_DIR/AGENTS.md"; then
     got="AGENTS.md → ~/AGENTS.md"; n=$((n + 1))
   fi
-  if ship "$root" agents/CLAUDE.md "$HOME_DIR/CLAUDE.md"; then
+  # Both CLAUDE.md destinations honour LINK_CLAUDE_MD (CLAUDE_MD_MODE).
+  if ship "$root" agents/CLAUDE.md "$HOME_DIR/CLAUDE.md" "$CLAUDE_MD_MODE"; then
     n=$((n + 1))
     if [ "$CLAUDE_GLOBAL_ANY" = "1" ]; then
       got="${got:+$got, }CLAUDE.md → ~/CLAUDE.md (~/.claude/CLAUDE.md comes from CLAUDE.global.md)"
     else
-      install_copy "$root/agents/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+      if [ "$CLAUDE_MD_MODE" = "l" ]; then
+        install_link "$root/agents/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+      else
+        install_copy "$root/agents/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+      fi
       got="${got:+$got, }CLAUDE.md → ~/CLAUDE.md, ~/.claude/CLAUDE.md"
     fi
   fi
@@ -669,8 +725,8 @@ step_settings() {
 # that ships one wins, and it beats agents/CLAUDE.md for this one destination.
 step_claude_global() {
   local root="$1" n=0
-  if ship "$root" claude-setup/config/CLAUDE.global.md "$CLAUDE_DIR/CLAUDE.md"; then n=1; fi
-  step_end CLAUDE.global.md "$root" "$n" "→ ~/.claude/CLAUDE.md"
+  if ship "$root" claude-setup/config/CLAUDE.global.md "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_MD_MODE"; then n=1; fi
+  step_end CLAUDE.global.md "$root" "$n" "→ ~/.claude/CLAUDE.md${CLAUDE_MD_MODE:+ (symlink)}"
 }
 
 # claude-setup/config/statusline-command.sh → ~/.claude/.
@@ -791,6 +847,7 @@ cat <<'CONF'
     QUEUE_NOW_MAX=3                             rows the NOW table may hold
     BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on
     BUS_SIDE=""                                 this machine's side (default: windows/mac/wsl/linux, detected)
+    LINK_CLAUDE_MD=""                           1 = setup.sh symlinks ~/CLAUDE.md and ~/.claude/CLAUDE.md to the repo files
 CONF
 echo ""
 echo "Restart Claude Code to pick up the hooks."

@@ -485,6 +485,80 @@ function checkHooks() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. config drift - installed COPIES that no longer match their source
+// ---------------------------------------------------------------------------
+
+/**
+ * setup installs ~/.claude/CLAUDE.md, ~/CLAUDE.md, the statusline and every
+ * hook script as a copy. A copy edited in place keeps working, `git status`
+ * in both repos stays clean, and the next setup run backs the edit up and
+ * overwrites it - or the repo moves on and the machine quietly runs the old
+ * text. Nothing else notices, so this does: each installed file whose source
+ * is known is compared byte for byte with the file it was installed from,
+ * resolved the way setup resolves it (the framework checkout from
+ * ~/.claude/sunstone-path, the memory repo from ai-memory-path, and whatever
+ * both ship, the memory repo's copy wins). Always on; a file that is not
+ * installed is not drift. The two memory hooks are left to the wiring check
+ * above, which already reports them.
+ *
+ * A file installed as a symlink (setup.sh with LINK_CLAUDE_MD=1) cannot drift
+ * from what it points at; one that points somewhere other than the current
+ * source still shows up here, because its content is compared, not its path.
+ */
+function checkDrift() {
+  // The checkout setup ran from, if it still holds a doctor; else this one.
+  let fw = FRAMEWORK_DIR;
+  const recorded = (read(path.join(CLAUDE_DIR, 'sunstone-path')) || '').split('\n')[0].trim();
+  if (recorded && exists(path.join(recorded, 'claude-setup', 'scripts', 'memory-doctor.js'))) fw = recorded;
+  const roots = [fw];
+  if (path.resolve(REPO) !== path.resolve(fw)) roots.push(REPO);
+  const rel = (root, r) => path.join(root, ...r.split('/'));
+  // The last root that ships it wins - the order setup applies them in.
+  const sourceOf = (r) => {
+    let hit = null;
+    for (const root of roots) if (exists(rel(root, r))) hit = rel(root, r);
+    return hit;
+  };
+
+  const pairs = [];
+  pairs.push({
+    installed: path.join(CLAUDE_DIR, 'CLAUDE.md'),
+    source: sourceOf('claude-setup/config/CLAUDE.global.md') || sourceOf('agents/CLAUDE.md'),
+  });
+  pairs.push({ installed: path.join(HOME, 'CLAUDE.md'), source: sourceOf('agents/CLAUDE.md') });
+  for (const f of ['statusline-command.sh', 'statusline-command.js']) {
+    pairs.push({ installed: path.join(CLAUDE_DIR, f), source: sourceOf(`claude-setup/config/${f}`) });
+  }
+  const hookNames = new Set();
+  for (const root of roots) {
+    try { for (const f of fs.readdirSync(rel(root, 'claude-setup/config/hooks'))) hookNames.add(f); } catch { /* none */ }
+  }
+  for (const f of [...hookNames].sort()) {
+    if (/^ai-memory-(sync|commit)\./.test(f)) continue; // the wiring check reports these
+    pairs.push({ installed: path.join(CLAUDE_DIR, 'hooks', f), source: sourceOf(`claude-setup/config/hooks/${f}`) });
+  }
+
+  const drifted = [];
+  for (const { installed, source } of pairs) {
+    if (!source || !exists(installed)) continue;
+    const live = read(installed);
+    if (live === null || live === read(source)) continue;
+    let via = '';
+    try {
+      const st = fs.lstatSync(installed);
+      if (st.isSymbolicLink()) via = ` (it is a symlink to ${showPath(path.resolve(path.dirname(installed), fs.readlinkSync(installed)))}, not a copy)`;
+    } catch { /* plain file */ }
+    drifted.push({ installed, source, via });
+  }
+  stats.drifted = drifted.length;
+  for (const { installed, source, via } of drifted) {
+    warn('drift', `DRIFT: ${showPath(installed) === installed ? installed : '~/' + showPath(installed)} differs from ` +
+      `${showPath(source)}${via} - edit the repo file and re-run ${REINSTALL}, or copy the live file ` +
+      'back into the repo if the live edit is the one to keep. The next setup run overwrites it either way.');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. sync health - the "stopped syncing forever" failure
 // ---------------------------------------------------------------------------
 
@@ -1083,12 +1157,13 @@ function report() {
     const errs = findings.filter((f) => f.level === 'ERROR');
     const undrained = stats.undrained || 0;
     // WARNs that the docs promise the notice will raise: an installed hook
-    // that drifted from the framework copy (the pull-without-setup case),
+    // that drifted from the framework copy (the pull-without-setup case), an
+    // installed copy edited in place or left behind by the repo (drift),
     // index parity (a file written but unreachable) and the work queue (a NOW
     // that has grown past its cap or holds a date gone by). Sync/duplicate
     // WARNs stay in the full report - they are advisory and would make the
     // notice noisy.
-    const BRIEF_WARN_CHECKS = new Set(['wiring', 'index', 'queue']);
+    const BRIEF_WARN_CHECKS = new Set(['wiring', 'drift', 'index', 'queue']);
     const warns = findings.filter((f) => f.level === 'WARN' && BRIEF_WARN_CHECKS.has(f.check));
     // Silence is the goal state. Nothing to say once the stores are drained
     // and the wiring is sound - this stops being noise instead of becoming
@@ -1128,7 +1203,7 @@ function report() {
       // culprit (the drifted hook is already in the message; the unindexed
       // files are only in the items).
       const head = w.message.split(/\.\s|\s-\s/)[0];
-      const drift = /differs from the framework copy/.test(w.message);
+      const drift = /differs from/.test(w.message);
       const tail = drift
         ? ` - rerun ${REINSTALL}`
         : w.items.length
@@ -1242,6 +1317,7 @@ function report() {
 // ---------------------------------------------------------------------------
 
 checkHooks();
+checkDrift();
 checkSync();
 const { files } = checkIndex();
 checkQueue();

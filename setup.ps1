@@ -912,6 +912,12 @@ if ($MemoryRepoPath) {
     }
     Write-Host "  memory tree:   $memDir  (the SessionEnd hook commits only this path)"
     Write-Host "  optional config: $MemoryRepoPath\claude-setup\config\sunstone.conf"
+    # LINK_CLAUDE_MD is a setup.sh feature: a symlink on Windows needs Developer
+    # Mode or an elevated shell, so this side keeps installing copies and says
+    # so once; memory-doctor's drift check reports a copy edited in place.
+    if ((Get-ConfValue $MemoryRepoPath "LINK_CLAUDE_MD" "") -eq "1") {
+        Write-Host "  LINK_CLAUDE_MD=1 is set but ignored here: setup.ps1 installs CLAUDE.md as copies (memory-doctor's drift check covers them)" -ForegroundColor Yellow
+    }
 } else {
     Write-Host "  no personal repo recorded; hooks are installed and stay silent until"
     Write-Host "  $pathFile points at a git repo (or ~\.ai-memory is one)."
@@ -931,5 +937,6 @@ Write-Host '    QUEUE_NOW_HEADING=""                        its NOW heading (def
 Write-Host '    QUEUE_NOW_MAX=3                             rows the NOW table may hold'
 Write-Host '    BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on'
 Write-Host '    BUS_SIDE=""                                 this machine''s side (default: windows/mac/wsl/linux, detected)'
+Write-Host '    LINK_CLAUDE_MD=""                           1 = setup.sh symlinks the two CLAUDE.md files (ignored by setup.ps1)'
 Write-Host ""
 Write-Host "Restart Claude Code to pick up the hooks."

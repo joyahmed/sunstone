@@ -76,6 +76,9 @@ install_copy() {
   if [ -e "$dst" ] && ! cmp -s "$src" "$dst"; then
     backup "$dst"
   fi
+  # A symlink left by setup.sh under LINK_CLAUDE_MD=1 is replaced by the copy,
+  # never written THROUGH (cp onto a link to <src> itself fails as "same file").
+  [ -L "$dst" ] && rm -f "$dst"
   mkdir -p "$(dirname "$dst")"
   cp "$src" "$dst"
 }

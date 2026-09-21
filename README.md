@@ -163,8 +163,9 @@ replaces a whole `<name>` directory rather than merging it, backing up a differi
 itself first. Re-running it is also how an update takes effect: **`git pull` on this repo changes
 nothing that runs**, because every hook executes from a copy under `~/.claude/hooks/`,
 `~/.git-hooks/` or `~/.git-templates/hooks/`. `memory-doctor`'s wiring check reports that drift
-for the memory hooks under `~/.claude/hooks/`; it never reads the two installed git guards, so
-drift in those is only ever fixed by re-running `setup.sh`.
+for the memory hooks under `~/.claude/hooks/`, and its [drift check](#config-drift) for the other
+hooks, the two `CLAUDE.md` files and the statusline; it never reads the two installed git
+guards, so drift in those is only ever fixed by re-running `setup.sh`.
 On a machine already set up, a bare `./setup.sh` is enough - the memory repo is remembered.
 
 ```bash
@@ -244,6 +245,36 @@ things raise a WARN, never an ERROR, so the exit code is unchanged:
 Both WARNs are part of the `--brief` notice the SessionStart hook injects, so a NOW that has grown
 past its cap is mentioned at the start of a session rather than discovered at the end of a month.
 A `QUEUE_FILE` that names a missing file, or a queue with no matching heading, is a WARN too.
+
+### Config drift
+
+`setup` installs `~/.claude/CLAUDE.md` (from `CLAUDE.global.md`), `~/CLAUDE.md` (from your memory
+repo's `agents/CLAUDE.md`), the statusline and every hook script as **copies**. A copy edited in
+place keeps working, `git status` in both repos stays clean, and nothing says the machine and the
+repo have parted - until the next `setup` run backs the edit up and overwrites it. Two answers,
+one per direction:
+
+- **`memory-doctor` reports it.** The `drift` check is always on and costs a few file reads: each
+  installed file whose source is known is compared byte for byte with the file it was installed
+  from, resolved the way `setup` resolves it (the framework checkout from `~/.claude/sunstone-path`,
+  the memory repo from `ai-memory-path`, and whatever both ship, the memory repo's copy wins).
+  A difference is a WARN - `DRIFT: ~/CLAUDE.md differs from my-memory/agents/CLAUDE.md - edit the
+  repo file and re-run setup.sh, or copy the live file back into the repo if the live edit is the
+  one to keep` - and it is part of the `--brief` notice. Covered: the two `CLAUDE.md` files,
+  `statusline-command.sh` / `.js`, and everything in `~/.claude/hooks/` that either root ships
+  (the two memory hooks are reported by the **wiring** check instead). Both platforms.
+- **`LINK_CLAUDE_MD=1` prevents it, on POSIX.** With that key in `sunstone.conf`, `setup.sh`
+  installs the two `CLAUDE.md` files as **symlinks** to their repo sources instead of copies, so
+  editing the live file *is* editing the repo file and `git status` shows it. An existing copy
+  is backed up beside itself first (only when its content differs from the source); re-running
+  is a no-op once the links are in place, and removing the key turns them back into copies on
+  the next run. Off by default, because a link into a checkout surprises a machine that later
+  moves the checkout. `setup.ps1` ignores the key - a symlink on Windows needs Developer Mode -
+  and prints one line saying so; the drift check covers Windows instead.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `LINK_CLAUDE_MD` | unset = copies | `1`: `setup.sh` symlinks `~/CLAUDE.md` and `~/.claude/CLAUDE.md` to the repo files. POSIX only. |
 
 ## The session bus
 
