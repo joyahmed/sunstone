@@ -34,6 +34,12 @@
  *   7 registered - `--registered <basename>`: what still points at a file you
  *                  moved or retired. A retirement is not done until every root
  *                  that ships the file stops shipping it.
+ *   8 hooks      - a registration in settings.json is a CLAIM that something
+ *                  runs every session. It is false when the script is absent,
+ *                  and false in a quieter way when the script runs and exits 0
+ *                  because what it fronts is not installed - which is why "my
+ *                  memory recalled nothing" and "this machine has no memory"
+ *                  read identically from inside a session. Named, not assumed.
  *
  * Usage:
  *   node claude-setup/scripts/clone-health.js              # every repo, one line each
@@ -463,6 +469,66 @@ function claudeMdReport(roots) {
 }
 
 // ---------------------------------------------------------------------------
+// check 8 - a registered hook is a CLAIM about this machine, not a fact
+// ---------------------------------------------------------------------------
+
+/**
+ * Every SessionStart hook in settings.json asserts that something runs at the
+ * start of every session. Two ways that is false and neither shows up anywhere:
+ * the script is registered but absent, or it is present and exits 0 because the
+ * thing it fronts is not installed here. The second is deliberate in a hook - a
+ * machine without a memory is not an error, and nobody wants a nag every session
+ * - but it means a session cannot tell "my memory recalled nothing" from "I have
+ * no memory". That distinction belongs in a diagnostic, which is here.
+ *
+ * Reported, never assumed: a hook whose dependency is missing is listed as
+ * REGISTERED BUT INERT with the paths that were probed, so the claim and the
+ * evidence sit on the same screen.
+ */
+function hookReport(memoryRepo, conf) {
+  const settingsFile = path.join(CLAUDE_DIR, 'settings.json');
+  const text = readText(settingsFile);
+  if (!text) return null;
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return { error: 'settings.json is not valid JSON' }; }
+
+  const rows = [];
+  for (const [event, groups] of Object.entries((parsed && parsed.hooks) || {})) {
+    for (const g of Array.isArray(groups) ? groups : []) {
+      for (const h of (g && g.hooks) || []) {
+        const cmd = String((h && h.command) || '');
+        if (!cmd) continue;
+        // The script in `bash ~/.claude/hooks/x.sh --flag` / `node C:/.../y.mjs`.
+        const m = /(?:^|\s)((?:~|\/|[A-Za-z]:)[^\s"']+\.(?:sh|js|mjs|ps1|py))/.exec(cmd);
+        const script = m ? expandHome(m[1]) : null;
+        rows.push({
+          event,
+          command: cmd.length > 90 ? cmd.slice(0, 87) + '...' : cmd,
+          script,
+          present: script ? isFile(script) : null,
+        });
+      }
+    }
+  }
+
+  // The one dependency we can resolve without running anything: palimpsest's
+  // wrapper looks for build/cli/recall.js under PALIMPSEST_REPO, then two
+  // fallbacks, and exits 0 when none of them exists.
+  let palimpsest = null;
+  if (rows.some((r) => r.script && r.script.includes('palimpsest-recall'))) {
+    const configured = conf.PALIMPSEST_REPO ? expandHome(conf.PALIMPSEST_REPO) : '';
+    const candidates = [...new Set(
+      [configured, path.join(HOME, 'projects/06_Dev/palimpsest'), path.join(HOME, '.palimpsest/lib')]
+        .filter(Boolean)
+        .map((c) => path.resolve(c)))]
+      .map((c) => ({ dir: c, entry: path.join(c, 'build/cli/recall.js'), found: isFile(path.join(c, 'build/cli/recall.js')) }));
+    const db = path.join(HOME, '.palimpsest/memory.db');
+    palimpsest = { candidates, live: candidates.some((c) => c.found), db, dbPresent: isFile(db) };
+  }
+  return { settingsFile, rows, palimpsest, memoryRepo };
+}
+
+// ---------------------------------------------------------------------------
 // check 7 - when something moves, ask what stops running
 // ---------------------------------------------------------------------------
 
@@ -557,9 +623,9 @@ function renderDetail(r) {
   return out;
 }
 
-function main(repos, mig, claudeMd, queue, reg) {
+function main(repos, mig, claudeMd, queue, reg, hooksRep) {
   if (OPT.json) {
-    process.stdout.write(JSON.stringify({ repos, migrations: mig, claudeMd, queue, registered: reg }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ repos, migrations: mig, claudeMd, queue, registered: reg, hooks: hooksRep }, null, 2) + '\n');
     return;
   }
 
@@ -622,6 +688,31 @@ function main(repos, mig, claudeMd, queue, reg) {
     for (const d of queue.dups) console.log('      ' + d);
   }
 
+  // --- check 8 -------------------------------------------------------------
+  if (hooksRep && hooksRep.rows) {
+    const missing = hooksRep.rows.filter((r) => r.present === false);
+    console.log('');
+    console.log(bold('registered hooks') + dim('  (a registration is a claim that something runs every session)'));
+    console.log('  ' + hooksRep.rows.length + ' registered, ' +
+      (missing.length ? red(missing.length + ' pointing at a file that is not there') : green('all present')));
+    for (const r of missing) console.log('  ' + red('MISSING') + ' ' + r.event + ': ' + r.command);
+    if (OPT.verbose) for (const r of hooksRep.rows) console.log('  ' + dim(pad(r.event, 20) + r.command));
+    const p = hooksRep.palimpsest;
+    if (p) {
+      if (p.live) {
+        console.log('  ' + green('palimpsest: live') + dim(' (' + p.candidates.find((c) => c.found).dir +
+          (p.dbPresent ? ', db present' : ', NO db - it will recall nothing until one is built') + ')'));
+      } else {
+        console.log('  ' + yellow('palimpsest: REGISTERED BUT INERT') +
+          ' - the recall hook runs every session and exits 0 without a word, because none of these exists:');
+        for (const c of p.candidates) console.log('      ' + c.entry);
+        console.log('      ' + dim('db ' + (p.dbPresent ? 'present' : 'absent') + ': ' + p.db));
+        console.log('      ' + dim('So "no memory was recalled" and "this machine has no memory" look identical ' +
+          'from inside a session. They are not the same thing, and only one of them is a reason to trust the silence.'));
+      }
+    }
+  }
+
   // --- check 7 -------------------------------------------------------------
   if (reg) {
     console.log('');
@@ -678,6 +769,6 @@ function main(repos, mig, claudeMd, queue, reg) {
     ? { basename: OPT.registered, ...registrationReport(OPT.registered, installRoots) }
     : null;
 
-  main(repos, mig, claudeMd, queue, reg);
+  main(repos, mig, claudeMd, queue, reg, hookReport(memoryRepo, conf));
   process.exit(repos.some(strands) ? 1 : 0);
 })();
