@@ -469,9 +469,11 @@ function checkHooks() {
       const src = path.join(sourceDir, file);
       if (!exists(src)) continue;
       if (read(src) !== read(path.join(installedDir, file))) {
-        warn('wiring', `~/.claude/hooks/${file} differs from the framework copy - this machine ` +
-          'is running an older hook, or a local edit that was never committed back. ' +
-          `Rerun ${reinstall} to refresh it.`, [showPath(src)]);
+        warn('wiring', `~/.claude/hooks/${file} differs from the framework copy. That is ` +
+          'an older hook here, OR a local edit nobody committed back - the two look ' +
+          'identical from here and only reading the file tells them apart. Diff it ' +
+          `first: ${reinstall} overwrites the live copy and a host-adapted fix dies ` +
+          'silently that way.', [showPath(src)]);
       }
     }
 
@@ -1214,7 +1216,9 @@ function report() {
       const head = w.message.split(/\.\s|\s-\s/)[0];
       const drift = /differs from/.test(w.message);
       const tail = drift
-        ? ` - rerun ${REINSTALL}`
+        ? ' - CHECK WHICH SIDE IS RIGHT BEFORE REINSTALLING: the next setup run' +
+          ' overwrites the live file, and a copy adapted for this host reads exactly' +
+          ' like a stale one'
         : w.items.length
           ? `: ${w.items.slice(0, 3).join(', ')}${w.items.length > 3 ? `, +${w.items.length - 3} more` : ''}`
           : '';
