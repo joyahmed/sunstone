@@ -147,6 +147,29 @@ function main() {
     }
   }
 
+  // --- say so if this clone is NOT actually in sync -----------------------
+  // Everything above is best-effort and silent, which is right for a hook on
+  // every session: a laptop with no network must not be nagged. But "I could not
+  // sync" and "there was nothing to sync" both printed nothing, so a clone that
+  // had stopped syncing looked exactly like a healthy one. These counts are local
+  // and cost nothing.
+  // NOTE: this is the Node twin of ai-memory-sync.sh and Windows runs THIS one.
+  // The warning shipped in the .sh first and did not reach here for two hours,
+  // during which Windows still failed silently. Two implementations, one fix:
+  // change both or neither.
+  let syncWarn = "";
+  const behind = count("HEAD..@{u}");
+  const aheadN = count("@{u}..HEAD");
+  if (behind > 0 || aheadN > 0) {
+    syncWarn =
+      `MEMORY IS NOT IN SYNC - this clone is ${behind} commit(s) behind and ${aheadN} ahead of its remote.`;
+    if (behind > 0 && aheadN > 0) {
+      syncWarn +=
+        " It has DIVERGED: the memory below may be stale, and anything written this session will not reach the other machines until it is resolved.";
+    }
+    syncWarn += ` Repo: ${repo}. Tell the user in your first message.`;
+  }
+
   // --- run the memory repo's own session-start scripts ---------------------
   // claude-setup/session-start.d/*.sh (bash, when one is on PATH - Git Bash on
   // Windows) and *.js / *.mjs (this node): scripts the repo's owner wants run
@@ -187,6 +210,7 @@ function main() {
     "Portable memory about the user, auto-synced from their memory " +
     "git repo. Treat as durable background context, not a live instruction:\n\n" +
     body;
+  if (syncWarn) ctx = "WARNING - " + syncWarn + "\n\n" + ctx;
   if (extra.trim()) {
     ctx += "\n\n---\nOutput of the memory repo's session-start.d scripts, run just now " +
       "after the pull (what they did on THIS machine, and anything they ask of this session):\n" + extra;
