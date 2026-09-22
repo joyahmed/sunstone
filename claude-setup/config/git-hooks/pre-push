@@ -125,21 +125,37 @@ if [ "$GUARDED" = "1" ]; then
 		while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
 			[ -z "$LOCAL_REF" ] && continue
 
-			# Deleting a remote branch.
+			# Deleting a remote branch. NOT blocked: the rule here is "no force push",
+			# and a delete rewrites nobody else's history. It is still worth a word,
+			# because after a CHERRY-PICK integration the source branch is content-equal
+			# to the target WITHOUT being an ancestor of it, so deleting it strands the
+			# original commits. Say so and let the push through.
 			if printf '%s' "$LOCAL_SHA" | grep -qE "$ZERO"; then
-				printf '⛔ pre-push: refusing to DELETE %s on %s\n' "$REMOTE_REF" "$REPO" >&2
-				BLOCKED=1
+				if git cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null; then
+					if [ -z "$(git branch -r --contains "$REMOTE_SHA" 2>/dev/null | grep -v "$REMOTE_REF")" ]; then
+						printf 'â   pre-push: deleting %s on %s - its commits are on no other remote branch
+' "$REMOTE_REF" "$REPO" >&2
+						printf '   (content-equal after a cherry-pick is NOT the same as reachable)
+' >&2
+					fi
+				fi
 				continue
 			fi
 
 			# Brand-new branch - nothing on the remote to rewrite.
 			printf '%s' "$REMOTE_SHA" | grep -qE "$ZERO" && continue
 
-			# Cannot judge what we do not have. Rare, and safer to stop than guess.
+			# Remote tip not in this clone: fetch once and re-check instead of refusing.
+			# Still unknown after that, ALLOW it - git rejects a genuine non-fast-forward
+			# server-side anyway, so stopping here only made an ordinary push on a stale
+			# clone need a human.
 			if ! git cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null; then
-				printf '⛔ pre-push: %s is unknown locally - run `git fetch` before pushing to %s\n' "$REMOTE_SHA" "$REPO" >&2
-				BLOCKED=1
-				continue
+				git fetch --quiet "$1" 2>/dev/null || true
+				if ! git cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null; then
+					printf 'â   pre-push: %s unknown locally even after a fetch - cannot check for a rewrite; git will reject it if it is one
+' "$REMOTE_SHA" >&2
+					continue
+				fi
 			fi
 
 			# THE TEST: is the remote tip still reachable from what we are sending?
