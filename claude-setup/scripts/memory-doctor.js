@@ -1110,10 +1110,19 @@ function checkDuplicates(syncedMeta, workingMeta, repoMeta) {
     if (!bySlug.has(m.slug)) bySlug.set(m.slug, []);
     bySlug.get(m.slug).push(m);
   }
+  // A collision only means something ACROSS TIERS. Per-repo stores are namespaced
+  // by their repo, so two repos both holding `verification-baseline.md` or
+  // `deploy.md` is correct by design, not one fact with two homes - each documents
+  // its own codebase. Comparing store names instead of tiers made every repo that
+  // adopted a common filename collide with every other one.
+  const tierOf = (store) => (String(store).startsWith('repo:') ? 'repo' : store);
   const collisions = [];
   for (const [slug, group] of bySlug) {
     const stores = [...new Set(group.map((g) => g.store))];
-    if (stores.length > 1) collisions.push(`${slug}  -  ${stores.join('  +  ')}`);
+    const tiers = [...new Set(group.map((g) => tierOf(g.store)))];
+    if (stores.length > 1 && tiers.length > 1) {
+      collisions.push(`${slug}  -  ${stores.join('  +  ')}`);
+    }
   }
   if (collisions.length) {
     error('duplicates', `${collisions.length} memory slug(s) exist in more than one store. ` +
