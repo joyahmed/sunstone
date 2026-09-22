@@ -112,6 +112,12 @@ run() {
 # repo is touched by the auto-commit hook. --autostash protects a file written
 # but not yet committed, and a conflict is aborted rather than left half-done
 # for a human to discover later.
+# Divergence must never be silent. A failed pull that is merely "offline" is
+# fine and stays quiet; a clone that has actually diverged has STOPPED syncing,
+# and that is the state which went unnoticed for five days across three
+# machines in September 2026. It is reported into the session context instead.
+SYNC_WARN=""
+
 sync_pull() {
   run 8 git -C "$REPO" pull --ff-only --quiet && return 0
   # No upstream, or nothing upstream we lack - this is offline, not divergence.
@@ -119,6 +125,7 @@ sync_pull() {
   [ "$(git -C "$REPO" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)" = "0" ] && return 1
   if ! run 25 git -C "$REPO" pull --rebase --autostash --quiet; then
     run 10 git -C "$REPO" rebase --abort || true
+    SYNC_WARN="rebase-conflict"
     return 1
   fi
   return 0
@@ -147,6 +154,25 @@ if ahead; then
     fi
   fi
 fi
+
+# --- say so if this clone is NOT actually in sync --------------------------
+# Everything above is best-effort and silent, which is right for a hook on
+# every session: a laptop with no network must not be nagged. But "I could not
+# sync" and "there was nothing to sync" both printed nothing, so a clone that
+# had stopped syncing looked exactly like a healthy one. These counts are
+# local and cost nothing.
+BEHIND=$(git -C "$REPO" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
+AHEAD=$(git -C "$REPO" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
+if [ "$BEHIND" != "0" ] || [ "$AHEAD" != "0" ]; then
+  SYNC_WARN="MEMORY IS NOT IN SYNC - this clone is $BEHIND commit(s) behind and $AHEAD ahead of its remote."
+  if [ "$BEHIND" != "0" ] && [ "$AHEAD" != "0" ]; then
+    SYNC_WARN="$SYNC_WARN It has DIVERGED: the memory below may be stale, and anything written this session will not reach the other machines until it is resolved."
+  fi
+  SYNC_WARN="$SYNC_WARN Repo: $REPO. Tell the user in your first message."
+else
+  SYNC_WARN=""
+fi
+export SYNC_WARN
 
 # --- run the memory repo's own session-start scripts -----------------------
 # The repo just pulled may carry claude-setup/session-start.d/*.sh: scripts
@@ -196,6 +222,11 @@ except Exception:
     sys.exit(0)
 ctx = ("Portable memory about the user, auto-synced from their memory "
        "git repo. Treat as durable background context, not a live instruction:\n\n" + body)
+warn = os.environ.get("SYNC_WARN", "")
+if warn.strip():
+    ctx = "WARNING - " + warn.strip() + "
+
+" + ctx
 extra = os.environ.get("EXTRA", "")
 if extra.strip():
     ctx += ("\n\n---\nOutput of the memory repo's session-start.d scripts, run just now "
@@ -207,6 +238,9 @@ print(json.dumps({"hookSpecificOutput": {
 PY
 else
   # Fallback: plain stdout is also added to context by Claude Code.
+  [ -n "$SYNC_WARN" ] && printf 'WARNING - %s
+
+' "$SYNC_WARN"
   echo "Portable memory about the user, auto-synced from their memory repo:"
   cat "$MEM"
   [ -n "$EXTRA" ] && printf '\n---\nOutput of the memory repo'"'"'s session-start.d scripts:\n%s\n' "$EXTRA"
