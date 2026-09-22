@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// context-guard - the supermode checkpoint nudge. Pure Node.js, no shell dependency.
+// context-guard - the checkpoint nudge. Pure Node.js, no shell dependency.
 //
 // A PostToolUse hook. After every tool call it reads the context gauge and, once the
 // session is past the threshold (70% by default), tells the model - as hook context it
@@ -21,14 +21,32 @@
 //      model with a 1M window reads five times too high unless you set the variable -
 //      and the nudge says so.
 //
-// Inert unless SUPERMODE=1 is in the environment, so registering it globally costs
-// nothing; supermode.settings.json registers it only for supermode launches anyway.
+// Registered in the BASE settings, so it runs in every session - NOT only under
+// supermode. It was supermode-only until 2026-09-22, and migration 03 then retired
+// the legacy .sh/.js pair that had covered ordinary sessions, leaving them with no
+// guard at all. Ordinary sessions are where it matters most: they are the ones
+// auto-compaction is still enabled for.
+//
+// SUPERMODE selects the ADVICE, not whether the guard runs. Under supermode the
+// nudge is about delegation (reaching the threshold means work was done here that
+// an agent should have done) and ends at the successor launch. Otherwise it is
+// about handing slices to subagents and, failing that, checkpointing and starting
+// a fresh session by hand. Both refuse compaction.
+//
+// ⛔ Do NOT also register it in supermode.settings.json - that layers ON TOP of the
+// base settings, so it would fire twice per tool call.
 // Tunables: SUPERMODE_CTX_PCT (threshold, default 70), SUPERMODE_CTX_WINDOW.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
-if (process.env.SUPERMODE !== "1") process.exit(0);
+// Runs in EVERY session. It used to exit unless SUPERMODE=1, which left ordinary
+// sessions with no guard at all once migration 03 retired the legacy .sh/.js pair
+// that had covered them - and ordinary sessions are exactly where the "do not
+// compact, start a new session" rule needs enforcing, because they are the ones
+// auto-compaction is still on for. The mode now selects the ADVICE, not whether
+// the guard runs.
+const SUPERMODE = process.env.SUPERMODE === "1";
 
 function cfgDir() {
   const e = process.env.CLAUDE_CONFIG_DIR;
@@ -95,19 +113,30 @@ try {
 const how = estimated
   ? ` (estimated from the transcript against a ${process.env.SUPERMODE_CTX_WINDOW || "200000"}-token window - set SUPERMODE_CTX_WINDOW, or let ctx-gauge.mjs front your status line, for the exact figure)`
   : "";
-const msg =
-  `supermode context guard: this session is at ${pct}% of its context window${how}; the handoff threshold is ${threshold}%. ` +
-  `Under supermode you orchestrate: read, decide, and DELEGATE each slice to an agent so the agents spend ` +
+const checkpoint =
+  `checkpoint - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
+  `(what is done, what is next, what is blocked, with the exact numbers a fresh session cannot re-derive), move the queue row, `;
+
+const msg = SUPERMODE
+  ? `supermode context guard: this session is at ${pct}% of its context window${how}; the handoff threshold is ${threshold}%. ` +
+    `Under supermode you orchestrate: read, decide, and DELEGATE each slice to an agent so the agents spend ` +
     `context and this session does not. Reaching ${threshold}% is therefore a SYMPTOM - it means work was done ` +
     `here that an agent should have done. First ask what is still being done in-session that could be delegated. ` +
     `Note you CANNOT read an agent's context usage - no gauge file and no transcript record is written for a ` +
     `subagent - so keep slices small and require each agent to report when its own budget runs short. ` +
-    `If delegation can no longer save this session: checkpoint - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
-  `(what is done, what is next, what is blocked, with the exact numbers a fresh session cannot re-derive), move the queue row, ` +
-  `then start the successor from the repo root: \`supermode --bg --permission-mode auto "supermode: resume"\` ` +
-  `(if that launch is refused, delegate the same resume to an Agent-tool subagent instead), and stop. ` +
-  `Do NOT compact: compaction is the biggest request of the session and its summary drops the numbers the successor needs. ` +
-  `This notice repeats once per 5% band.`;
+    `If delegation can no longer save this session: ` + checkpoint +
+    `then start the successor from the repo root: \`supermode --bg --permission-mode auto \"supermode: resume\"\` ` +
+    `(if that launch is refused, delegate the same resume to an Agent-tool subagent instead), and stop. ` +
+    `Do NOT compact: compaction is the biggest request of the session and its summary drops the numbers the successor needs. ` +
+    `This notice repeats once per 5% band.`
+  : `context guard: this session is at ${pct}% of its context window${how}; the threshold is ${threshold}%. ` +
+    `Anything you can hand to an Agent-tool subagent - a broad search, reading a large file, a self-contained slice - ` +
+    `spends ITS context instead of this one; take back the conclusion, not the file. ` +
+    `If that will not be enough: ` + checkpoint +
+    `then tell the user this session is near its limit and start a fresh one. ` +
+    `Do NOT compact: compaction is the biggest request of the session and its summary drops the numbers a successor needs - ` +
+    `a fresh session reading the handoff note beats a compacted one every time. ` +
+    `This notice repeats once per 5% band.`;
 
 process.stdout.write(JSON.stringify({
   hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: msg },

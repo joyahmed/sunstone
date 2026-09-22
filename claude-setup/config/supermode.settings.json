@@ -1,20 +1,8 @@
 {
-  "$comment": "Layered onto a session by the `supermode` launcher via `claude --settings` - NOT merged into ~/.claude/settings.json. Everything here holds only for sessions launched as supermode: auto-compaction off (the session hands off to a successor instead - see context-guard.mjs for why), the context guard registered after every tool call, and the status line fronted by the gauge that writes the percentage the guard reads. Your own status line still renders; ctx-gauge.mjs delegates to it. Installed to ~/.claude/supermode.settings.json by setup.",
+  "$comment": "Layered onto a session by the `supermode` launcher via `claude --settings` - NOT merged into ~/.claude/settings.json. Everything here holds only for sessions launched as supermode: auto-compaction off (the session hands off to a successor instead - see context-guard.mjs for why), and the status line fronted by the gauge that writes the percentage the guard reads. Your own status line still renders; ctx-gauge.mjs delegates to it. The context guard itself is NOT registered here - it lives in the base settings so it covers EVERY session, and selects its advice from the SUPERMODE environment variable rather than from which settings file registered it. Registering it in both would fire it twice per tool call. Installed to ~/.claude/supermode.settings.json by setup.",
   "autoCompactEnabled": false,
   "statusLine": {
     "type": "command",
     "command": "node ~/.claude/hooks/ctx-gauge.mjs"
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/hooks/context-guard.mjs"
-          }
-        ]
-      }
-    ]
   }
 }

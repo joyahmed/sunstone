@@ -48,6 +48,16 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/context-guard.mjs"
+          }
+        ]
+      }
     ]
   }
 }
