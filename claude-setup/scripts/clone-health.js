@@ -707,8 +707,11 @@ function main(repos, mig, claudeMd, queue, reg, hooksRep) {
           ' - the recall hook runs every session and exits 0 without a word, because none of these exists:');
         for (const c of p.candidates) console.log('      ' + c.entry);
         console.log('      ' + dim('db ' + (p.dbPresent ? 'present' : 'absent') + ': ' + p.db));
-        console.log('      ' + dim('So "no memory was recalled" and "this machine has no memory" look identical ' +
+        console.log('      ' + dim('So "no memory was recalled" and "this home has no memory" look identical ' +
           'from inside a session. They are not the same thing, and only one of them is a reason to trust the silence.'));
+        console.log('      ' + dim('⚠ Inert may be CORRECT here: a memory is per HOME (a Windows side and a WSL side ' +
+          'are two homes on one box), and a home can be deliberately without one. Check the decision before ' +
+          '"fixing" this by installing a second memory beside the real one.'));
       }
     }
   }
