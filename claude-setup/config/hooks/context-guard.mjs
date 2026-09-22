@@ -97,7 +97,12 @@ const how = estimated
   : "";
 const msg =
   `supermode context guard: this session is at ${pct}% of its context window${how}; the handoff threshold is ${threshold}%. ` +
-  `Checkpoint now - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
+  `Under supermode you orchestrate: read, decide, and DELEGATE each slice to an agent so the agents spend ` +
+    `context and this session does not. Reaching ${threshold}% is therefore a SYMPTOM - it means work was done ` +
+    `here that an agent should have done. First ask what is still being done in-session that could be delegated. ` +
+    `Note you CANNOT read an agent's context usage - no gauge file and no transcript record is written for a ` +
+    `subagent - so keep slices small and require each agent to report when its own budget runs short. ` +
+    `If delegation can no longer save this session: checkpoint - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
   `(what is done, what is next, what is blocked, with the exact numbers a fresh session cannot re-derive), move the queue row, ` +
   `then start the successor from the repo root: \`supermode --bg --permission-mode auto "supermode: resume"\` ` +
   `(if that launch is refused, delegate the same resume to an Agent-tool subagent instead), and stop. ` +
