@@ -56,5 +56,11 @@ process.stdout.write(
     "each agent exclusive ownership of the files it edits, hand it the facts " +
     "already verified rather than making it rediscover them, name the shared " +
     "resources nobody may touch, and gate centrally once over the combined tree. " +
+    "⚠ Do not spend THIS session's context doing the work: reading large " +
+    "files, running broad searches or writing the code here is what exhausts the " +
+    "one context that has to survive to finish the run. Give agents the paths and " +
+    "take back conclusions, not file dumps. You cannot observe an agent's context " +
+    "usage - no such channel exists - so keep each slice small and require every " +
+    "agent to say so when its own budget runs short. " +
     "See `claude-setup/commands/supercode.md` for the full procedure.\n",
 );

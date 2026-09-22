@@ -35,6 +35,30 @@ Either way, **say the expected agent count before launching** so it can be vetoe
 for a different question is fine. The one deliberate overlap is refuters: several agents
 attacking the same finding is the assurance.
 
+## ⭐ Your own context is the one that has to survive
+
+The session running this is the orchestrator. It is the only context that must last until the
+whole run is gated and committed - every agent is disposable and it is not. So do not spend it
+doing the work:
+
+- **Do not read large files, run broad searches, or write the code here** when an agent can do
+  it and return the conclusion. Hand agents the PATHS; take back findings, `file:line` and
+  verdicts - not file dumps. A fan-out that pipes every agent's raw output back into this
+  session has moved the exhaustion, not avoided it.
+- **Keep the gate, the commit and the decisions here.** An agent that commits its own work
+  removes the gate; an orchestrator that greps the tree itself removes its own headroom.
+- ⛔ **You cannot observe an agent's context usage. No such channel exists** - measured
+  2026-09-22: subagent turns produce no sidechain record in the parent transcript, and the
+  `~/.claude/ctx/<id>.pct` gauge is written by the status line, which only an interactive
+  session has. So the only working signal is the agent telling you: keep each slice small
+  enough that exhaustion is unlikely, and require every agent to say so when its own budget
+  runs short.
+
+This applies to `supermode` too, for the same reason and by a different route - see the
+supermode memory. The two words stay distinct: supercode is fan-out for speed, this is about
+not burning the one context that cannot be replaced mid-run.
+
+
 ## What it cannot do
 
 A change to one shared file; anything that must land as a single commit; ambiguous work -
