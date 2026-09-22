@@ -1,6 +1,6 @@
 ---
-description: Supercode - fan the work out over concurrent agents. Plain = the minimum that gives assurance; `max` = as wide as the work splits.
-argument-hint: "[max] [what to do]"
+description: Supercode - fan the work out over concurrent agents. Plain (or `min`) = the minimum that gives assurance; `max` = as wide as the work splits.
+argument-hint: "[min|max] [what to do]"
 ---
 
 **Supercode** means: do not serialise work that separates by file. Author and run a
@@ -10,7 +10,7 @@ obviously splits.
 
 `$ARGUMENTS` sets the width:
 
-- **plain** - the *minimum that gives assurance*: 2-3 disjoint lenses, one refuter per
+- **plain**, or the explicit **`min`** - the *minimum that gives assurance*: 2-3 disjoint lenses, one refuter per
   finding, writers only on disjoint files. About a tenth of the cost of max.
 - **`max`** - the person is in a hurry: every agent the work splits into, refuters on every
   finding, speed over tokens.
