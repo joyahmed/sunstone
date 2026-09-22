@@ -25,8 +25,42 @@ try {
   process.exit(0);
 }
 
-if (/^\s*\/supermode\b/i.test(prompt)) process.exit(0);
-if (!/\bsupermode\b/i.test(prompt)) process.exit(0);
+
+// Only what the USER TYPED counts. A message relayed from another Claude
+// session arrives as an ordinary user turn wrapped in a
+// <cross-session-message ...> envelope, so a peer that merely MENTIONS this
+// word would otherwise flip this machine into the mode - nobody asked for it.
+// Found 2026-09-22, when one session quoted the word to another and the
+// receiving hook fired. The same goes for <system-reminder> blocks and for
+// slash-command output, which can quote anything. Strip those blocks and match
+// only on the remainder. An UNTERMINATED envelope truncates to the end of the
+// prompt, so a partial or malformed relay cannot smuggle the word in either.
+// Plain string scanning, deliberately: no regex escaping to get wrong.
+function stripBlock(s, open, close) {
+  for (;;) {
+    const i = s.toLowerCase().indexOf(open);
+    if (i < 0) return s;
+    const j = s.toLowerCase().indexOf(close, i + open.length);
+    s = j < 0 ? s.slice(0, i) : s.slice(0, i) + " " + s.slice(j + close.length);
+  }
+}
+function typedOnly(p) {
+  let s = String(p);
+  for (const [o, c] of [
+    ["<cross-session-message", "</cross-session-message>"],
+    ["<system-reminder", "</system-reminder>"],
+    ["<local-command-stdout", "</local-command-stdout>"],
+    ["<command-name", "</command-name>"],
+    ["<command-message", "</command-message>"],
+    ["<command-args", "</command-args>"],
+  ]) s = stripBlock(s, o, c);
+  return s;
+}
+
+const typed = typedOnly(prompt);
+
+if (/^\s*\/supermode\b/i.test(typed)) process.exit(0);
+if (!/\bsupermode\b/i.test(typed)) process.exit(0);
 
 process.stdout.write(
   "The user said \"supermode\". Invoke the `supermode` skill now (Skill tool, name " +
