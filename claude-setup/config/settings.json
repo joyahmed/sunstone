@@ -39,6 +39,14 @@
             "command": "node ~/.claude/hooks/supermode-trigger.mjs"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/supercode-trigger.mjs"
+          }
+        ]
       }
     ]
   }
