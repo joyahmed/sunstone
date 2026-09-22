@@ -86,6 +86,17 @@ if [ -z "$REPO" ]; then
 	[ -n "$TOP" ] && REPO=$(basename "$TOP")
 fi
 
+# --- public-repo privacy guard ---------------------------------------------
+# Runs BEFORE the memory-repo logic and independently of it: a public repo is
+# usually not a memory repo, so it must not sit behind the "no personal repo
+# configured" fast path below. The guard is a separate script so it can be
+# tested on its own and so this file stays the single chaining entry point.
+# Missing or non-executable → skipped, exactly like any other optional guard.
+PPG="$HERE/public-privacy-guard.sh"
+if [ -f "$PPG" ]; then
+	sh "$PPG" "$REPO" || exit 1
+fi
+
 # --- locate the personal repo and its optional config -----------------------
 repo_name_of() {
 	url=$(git -C "$1" remote get-url origin 2>/dev/null) || url=""
