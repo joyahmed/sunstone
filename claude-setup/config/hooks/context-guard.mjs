@@ -73,21 +73,58 @@ try {
   }
 } catch { pct = null; }
 
+/**
+ * The window this session actually has, from the transcript's own model record.
+ *
+ * ⛔ `"model"` on an assistant record is NOT enough: it drops the variant suffix,
+ * so a 1M session reports plain `claude-opus-5` there, 243 times in one
+ * transcript. The authoritative record is the model-identity attachment -
+ * `attachment.type === "model"` with `identity.modelId` = `claude-opus-5[1m]`
+ * and `marketingName` = `Opus 5 (1M context)`. Last one wins: the model can
+ * change mid-session.
+ *
+ * Returns null when the transcript says nothing about which model this is.
+ * Null means "cannot know", and the caller must not turn that into a number -
+ * assuming 200k here is what told a 1M session it was at 110% of its window.
+ */
+function windowFromTranscript(lines) {
+  const env = parseInt(process.env.SUPERMODE_CTX_WINDOW || "", 10);
+  if (Number.isFinite(env) && env > 0) return env;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line || !line.includes('"modelId"')) continue;
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    const id = d && d.attachment && d.attachment.type === "model" && d.attachment.identity;
+    if (!id) continue;
+    const modelId = String(id.modelId || "");
+    const marketing = String(id.marketingName || "");
+    const m = /\[(\d+)m\]/i.exec(modelId) || /\b(\d+)M\b/.exec(marketing);
+    if (m) return parseInt(m[1], 10) * 1000 * 1000;
+    if (/^claude-(opus|sonnet|haiku|fable)/.test(modelId)) return 200000;  // no variant marker: the standard window
+    return null;                                                           // a model this hook has never heard of
+  }
+  return null;
+}
+
 // 2. The estimate from the transcript.
 if (pct === null && typeof input.transcript_path === "string" && existsSync(input.transcript_path)) {
   try {
     const lines = readFileSync(input.transcript_path, "utf-8").split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line || !line.includes('"usage"')) continue;
-      let d; try { d = JSON.parse(line); } catch { continue; }
-      const u = d && d.type === "assistant" && d.message && d.message.usage;
-      if (!u) continue;
-      const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      const window = parseInt(process.env.SUPERMODE_CTX_WINDOW || "200000", 10) || 200000;
-      pct = Math.round((used / window) * 100);
-      estimated = true;
-      break;
+    const window = windowFromTranscript(lines);
+    // No window, no percentage. "I could not find out" and "I found out you are
+    // at 110%" are different answers, and only one of them is honest here.
+    if (window) {
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line || !line.includes('"usage"')) continue;
+        let d; try { d = JSON.parse(line); } catch { continue; }
+        const u = d && d.type === "assistant" && d.message && d.message.usage;
+        if (!u) continue;
+        const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        pct = Math.round((used / window) * 100);
+        estimated = window;
+        break;
+      }
     }
   } catch { pct = null; }
 }
@@ -111,7 +148,8 @@ try {
 } catch { /* skip */ }
 
 const how = estimated
-  ? ` (estimated from the transcript against a ${process.env.SUPERMODE_CTX_WINDOW || "200000"}-token window - set SUPERMODE_CTX_WINDOW, or let ctx-gauge.mjs front your status line, for the exact figure)`
+  ? ` (estimated from the transcript against this session's own ${estimated >= 1e6 ? `${estimated / 1e6}M` : `${estimated / 1000}k`}-token window` +
+    ` - let ctx-gauge.mjs front your status line for the exact figure, or set SUPERMODE_CTX_WINDOW to override)`
   : "";
 const checkpoint =
   `checkpoint - do not start new work. Bring the current slice to a green gate, commit it, write the handoff note ` +
