@@ -89,7 +89,9 @@ echo ""
 # Hooks and settings are unaffected - a .bak file beside them is inert - so they
 # keep the in-place default and only the skill path passes a directory.
 backup() {
-  local src="$1" dest_dir="$2"
+  # ${2:-} not $2: setup.sh runs under `set -u`, and install_copy calls this with
+  # one argument, so a bare $2 aborts the whole installer on the first backup.
+  local src="$1" dest_dir="${2:-}"
   if [ -f "$src" ] || [ -d "$src" ]; then
     local bak i=1 stem="$src"
     if [ -n "$dest_dir" ]; then
