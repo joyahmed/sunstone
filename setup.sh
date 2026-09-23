@@ -77,14 +77,28 @@ echo ""
 
 # ── Helpers ──────────────────────────────────────
 
-# backup <path> - copy an existing file or directory to <path>.bak.<timestamp>.
+# backup <path> [dest_dir] - copy an existing file or directory to
+# <path>.bak.<timestamp>, or into <dest_dir> when one is given.
+#
+# The destination matters for skills and nothing else. Every directory under a
+# skills root IS its registration, so a <name>.bak.<timestamp> left beside the
+# original is loaded as a SECOND, STALE skill - an outdated copy of a real one,
+# sitting in the live list a pick away from being used. It was found on the Mac
+# and on JOYR9 (17 backups across three roots there, some three weeks old,
+# including a stale joy-frontend-framework whose description no longer matched).
+# Hooks and settings are unaffected - a .bak file beside them is inert - so they
+# keep the in-place default and only the skill path passes a directory.
 backup() {
-  local src="$1"
+  local src="$1" dest_dir="$2"
   if [ -f "$src" ] || [ -d "$src" ]; then
-    local bak i=1
-    bak="${src}.bak.$(date +%Y%m%d_%H%M%S)"
+    local bak i=1 stem="$src"
+    if [ -n "$dest_dir" ]; then
+      mkdir -p "$dest_dir"
+      stem="$dest_dir/$(basename "$src")"
+    fi
+    bak="${stem}.bak.$(date +%Y%m%d_%H%M%S)"
     # Unique even when the same file is replaced twice within one second.
-    while [ -e "$bak" ]; do bak="${src}.bak.$(date +%Y%m%d_%H%M%S)-$i"; i=$((i + 1)); done
+    while [ -e "$bak" ]; do bak="${stem}.bak.$(date +%Y%m%d_%H%M%S)-$i"; i=$((i + 1)); done
     cp -r "$src" "$bak" 2>/dev/null || true
     echo "  backed up: $src → $bak"
   fi
@@ -563,8 +577,9 @@ step_skills() {
       # copy of ours - it may be a skill the user wrote by hand under the same
       # name. So back it up first. Only when it DIFFERS, so re-running an
       # unchanged tree still leaves no .bak clutter, exactly like install_file.
+      # ...OUTSIDE the skills root, or the backup registers as a second skill.
       if [ -d "$dest/$name" ] && ! diff -rq "${d%/}" "$dest/$name" >/dev/null 2>&1; then
-        backup "$dest/$name"
+        backup "$dest/$name" "$(dirname "$dest")/skill-backups"
       fi
       rm -rf "${dest:?}/$name"
       cp -r "${d%/}" "$dest/$name"
