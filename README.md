@@ -275,6 +275,7 @@ one per direction:
 | Key | Default | Meaning |
 |---|---|---|
 | `LINK_CLAUDE_MD` | unset = copies | `1`: `setup.sh` symlinks `~/CLAUDE.md` and `~/.claude/CLAUDE.md` to the repo files. POSIX only. |
+| `LINK_HOOKS` | unset = copies | `1`: `setup.sh` symlinks `~/.claude/hooks/*` at this repo's `claude-setup/config/hooks/*`. A `git pull` here then updates every hook on that machine, instead of the fix waiting for somebody to re-run setup on each box. POSIX only; `setup.ps1` ignores it. |
 
 ## The session bus
 

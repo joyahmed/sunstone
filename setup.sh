@@ -126,9 +126,22 @@ install_link() {
 }
 
 # install_file <src> <dst> - install_copy, then mark <dst> executable.
+#
+# With LINK_HOOKS=1 in sunstone.conf it links instead, exactly as LINK_CLAUDE_MD
+# does for the two CLAUDE.md files. That is the difference between a fix reaching
+# a machine on `git pull` and a fix sitting in this repo until somebody re-runs
+# setup on every box - which is how ai-memory-sync.sh stayed dead here for a day
+# after it had already been repaired upstream, with every session in the meantime
+# telling its user the memory was missing. Copies are still the default: a link
+# makes the live hook editable through the repo, which is not what every machine
+# wants. This is setup.sh, so POSIX is a given; setup.ps1 keeps copies on Windows.
 install_file() {
-  install_copy "$1" "$2"
-  chmod +x "$2"
+  if [ "$(conf_get LINK_HOOKS)" = "1" ]; then
+    install_link "$1" "$2"
+  else
+    install_copy "$1" "$2"
+    chmod +x "$2"
+  fi
 }
 
 # read_path_file <file> - the first line of a one-line path file, TRIMMED (a
