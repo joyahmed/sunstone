@@ -150,6 +150,16 @@ function Test-SameFile {
 # identical one is left alone, so a re-run of setup produces no backup clutter.
 function Install-File {
     param([string]$Src, [string]$Dst)
+    # LINK_HOOKS makes $Dst a symlink back to $Src. Copy-Item resolves the link
+    # and then refuses to overwrite the file with itself ("Cannot overwrite the
+    # item ... with itself"), which aborted setup at the Ship-Dir that re-ships
+    # claude-setup\config\hooks into ~\.claude\hooks. A link already IS the
+    # source, so there is nothing to copy and nothing to back up.
+    $existing = Get-Item -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+    if ($existing -and $existing.LinkType -eq "SymbolicLink") {
+        $lt = @($existing.Target)
+        if ($lt -and $lt[0] -eq $Src) { return }
+    }
     # ⚠️ Backup-Item returns a value now, and an uncaptured return in PowerShell
     # flows into THIS function's output - which then flows into Ship's. Assign
     # it, both to keep the streams clean and because the answer matters: a
@@ -659,24 +669,24 @@ function Step-End {
 # last root wins without the earlier copy landing first, which would back the
 # file up on every run. Returns $true when installed.
 function Ship {
-    param([string]$Root, [string]$Rel, [string]$Dst)
+    param([string]$Root, [string]$Rel, [string]$Dst, [switch]$Link)
     if (-not (Test-Path -LiteralPath (Join-Path $Root $Rel) -PathType Leaf)) { return $false }
     if ($Root -ne $script:LastRoot -and (Test-Path -LiteralPath (Join-Path $script:LastRoot $Rel) -PathType Leaf)) {
         $script:Overridden++
         return $false
     }
-    Install-File (Join-Path $Root $Rel) $Dst
+    if ($Link) { Install-HookFile (Join-Path $Root $Rel) $Dst } else { Install-File (Join-Path $Root $Rel) $Dst }
     return $true
 }
 
 # Ship every file of <Root>\<Rel> matching <Filter> into <Dst>; returns the count.
 function Ship-Dir {
-    param([string]$Root, [string]$Rel, [string]$Dst, [string]$Filter)
+    param([string]$Root, [string]$Rel, [string]$Dst, [string]$Filter, [switch]$Link)
     $n = 0
     $dir = Join-Path $Root $Rel
     if (Test-Path -LiteralPath $dir -PathType Container) {
         foreach ($f in (Get-ChildItem -LiteralPath $dir -File -Filter $Filter)) {
-            if (Ship $Root (Join-Path $Rel $f.Name) (Join-Path $Dst $f.Name)) { $n++ }
+            if (Ship $Root (Join-Path $Rel $f.Name) (Join-Path $Dst $f.Name) -Link:$Link) { $n++ }
         }
     }
     return $n
@@ -874,7 +884,7 @@ function Install-Root {
     Step-End "subagents" $Root $n "$n → ~\.claude\agents"
     # Hook scripts are only COPIED; the memory hooks were registered above and
     # anything else is registered by the settings.json of the root that ships it.
-    $n = Ship-Dir $Root "claude-setup\config\hooks" $ClaudeHooks "*"
+    $n = Ship-Dir $Root "claude-setup\config\hooks" $ClaudeHooks "*" -Link
     Step-End "hooks" $Root $n "$n → ~\.claude\hooks (copied, not registered)"
     Install-Supermode $Root
     Install-GitHooks $Root
