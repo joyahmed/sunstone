@@ -22,4 +22,20 @@ if [ ! -f "$settings" ]; then
   exit 1
 fi
 command -v claude >/dev/null 2>&1 || { echo "supermode: claude is not on PATH" >&2; exit 1; }
+
+# Remote Control on by default. An unattended session is the one most worth being
+# reachable: it runs for hours with nobody watching, and without this its peers
+# cannot ask it what it is holding, so the answer has to come through the person
+# the whole mode exists to leave alone. Added LAST because the flag's session name
+# is optional and would otherwise swallow a following prompt; skipped for -p/--print,
+# which is not an interactive session, and never added twice.
+rc=1
+for arg in "$@"; do
+  case "$arg" in
+    --remote-control|--remote-control=*|-p|--print) rc=0 ;;
+  esac
+done
+if [ "$rc" = "1" ]; then
+  SUPERMODE=1 exec claude --settings "$settings" "$@" --remote-control
+fi
 SUPERMODE=1 exec claude --settings "$settings" "$@"
