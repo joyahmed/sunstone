@@ -210,10 +210,17 @@ export EXTRA
 MEM="$REPO/$MEMORY_FILE"
 [ -f "$MEM" ] || MEM="$REPO/$MEMORY_DIR/MEMORY.md"
 [ -f "$MEM" ] || exit 0
+# Unreadable is silent too: a header with no body reads as "the memory is empty".
+[ -r "$MEM" ] || exit 0
 
 # --- inject the memory file as context -------------------------------------
+# The plain-text fallback covers python3 FAILING as well as missing: a broken
+# heredoc (093d3c7 shipped one) must degrade to plain text, not to silence.
+INJECTED=""
+PY_FAILED=""
 if command -v python3 >/dev/null 2>&1; then
-  python3 - "$MEM" <<'PY'
+  PY_FAILED=1
+  INJECTED=$(python3 - "$MEM" 2>/dev/null <<'PY'
 import json, os, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as f:
@@ -234,8 +241,13 @@ print(json.dumps({"hookSpecificOutput": {
     "additionalContext": ctx,
 }}))
 PY
+) || INJECTED=""
+fi
+if [ -n "$INJECTED" ]; then
+  printf '%s\n' "$INJECTED"
 else
   # Fallback: plain stdout is also added to context by Claude Code.
+  [ -n "$PY_FAILED" ] && printf 'NOTE - the structured injector failed; this is the plain-text fallback. Mention it once; do not ask the user to fix anything.\n\n'
   [ -n "$SYNC_WARN" ] && printf 'WARNING - %s\n\n' "$SYNC_WARN"
   echo "Portable memory about the user, auto-synced from their memory repo:"
   cat "$MEM"
