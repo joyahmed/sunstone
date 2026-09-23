@@ -135,8 +135,13 @@ install_link() {
 # telling its user the memory was missing. Copies are still the default: a link
 # makes the live hook editable through the repo, which is not what every machine
 # wants. This is setup.sh, so POSIX is a given; setup.ps1 keeps copies on Windows.
+# The personal repo is resolved here rather than taken from $MEMORY_REPO, because
+# --skip-memory leaves that empty and the key would then be silently ignored -
+# which is exactly the failure this whole change exists to stop.
 install_file() {
-  if [ "$(conf_get LINK_HOOKS)" = "1" ]; then
+  local repo="$MEMORY_REPO"
+  [ -n "$repo" ] || repo="$(read_path_file "$HOME_DIR/.claude/ai-memory-path")"
+  if [ -n "$repo" ] && [ "$(conf_get "$repo" LINK_HOOKS "")" = "1" ]; then
     install_link "$1" "$2"
   else
     install_copy "$1" "$2"
