@@ -2,9 +2,9 @@
 /**
  * clone-health.js - does this machine's picture of its own repos match reality?
  *
- * Implements claude-setup/clone-health-reporter-SPEC.md (everything-joy). On
- * 2026-09-22 three machines each published a confident wrong conclusion in the
- * same hour, and every one of them came from the same defect: a probe measured
+ * Why it exists: three machines once each published a confident wrong
+ * conclusion in the same hour, and every one of them came from the same defect:
+ * a probe measured
  * one thing and the claim asserted another. A clone can be git-clean, current,
  * and materially broken at the same time.
  *

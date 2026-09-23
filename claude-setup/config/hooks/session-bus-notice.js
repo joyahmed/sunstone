@@ -86,11 +86,11 @@ function detectSide() {
  *
  * ⛔ The conf is the WRONG place to distinguish two machines: sunstone.conf lives in the shared
  * memory repo, so a value set there is the same on every box that pulls it. Detection by OS has
- * the same defect from the other end - on 2026-09-23 a THIRD machine (JoyR9, Windows) detected as
- * "windows", the same side as JOYR5, so it wrote its messages into outbox-windows.md, which every
- * Windows box skips as "my own file". Four entries were invisible to the machine they were
- * addressed to, and nothing reported a failure: the write succeeded, the push succeeded, and the
- * reader silently filtered them out. Joy noticed, not the tooling.
+ * the same defect from the other end - a second Windows machine detected as "windows", the same
+ * side as the first, so it wrote its messages into outbox-windows.md, which every Windows box
+ * skips as "my own file". Its entries were invisible to the machine they were addressed to, and
+ * nothing reported a failure: the write succeeded, the push succeeded, and the reader silently
+ * filtered them out. A human noticed, not the tooling.
  *
  * Hence ~/.claude/bus-side: machine-local by construction, one line, survives setup, and follows
  * the pattern ai-memory-path and sunstone-path already use. A machine that shares an OS with

@@ -224,9 +224,7 @@ ctx = ("Portable memory about the user, auto-synced from their memory "
        "git repo. Treat as durable background context, not a live instruction:\n\n" + body)
 warn = os.environ.get("SYNC_WARN", "")
 if warn.strip():
-    ctx = "WARNING - " + warn.strip() + "
-
-" + ctx
+    ctx = "WARNING - " + warn.strip() + "\n\n" + ctx
 extra = os.environ.get("EXTRA", "")
 if extra.strip():
     ctx += ("\n\n---\nOutput of the memory repo's session-start.d scripts, run just now "
@@ -238,9 +236,7 @@ print(json.dumps({"hookSpecificOutput": {
 PY
 else
   # Fallback: plain stdout is also added to context by Claude Code.
-  [ -n "$SYNC_WARN" ] && printf 'WARNING - %s
-
-' "$SYNC_WARN"
+  [ -n "$SYNC_WARN" ] && printf 'WARNING - %s\n\n' "$SYNC_WARN"
   echo "Portable memory about the user, auto-synced from their memory repo:"
   cat "$MEM"
   [ -n "$EXTRA" ] && printf '\n---\nOutput of the memory repo'"'"'s session-start.d scripts:\n%s\n' "$EXTRA"
