@@ -55,14 +55,26 @@ Write-Host ""
 # ── Helpers ──────────────────────────────────────
 
 function Backup-Item {
-    param([string]$Path)
+    param([string]$Path, [string]$DestDir)
     if (Test-Path -LiteralPath $Path) {
+        # $DestDir is OPTIONAL and only the skills caller passes one. A skill
+        # is REGISTERED by its directory existing, so a <name>.bak.<stamp>\
+        # written beside it registers as a second, stale skill with an
+        # outdated description - one pick away from being used. Hooks and
+        # settings keep the in-place default: a .bak file beside them is inert,
+        # and changing behaviour that was never broken would be the wrong fix.
+        # Mirrors setup.sh backup() gaining an optional destination (98d9c64).
+        $stem = $Path
+        if ($DestDir) {
+            if (-not (Test-Path -LiteralPath $DestDir)) { New-Item -ItemType Directory -Force -Path $DestDir | Out-Null }
+            $stem = Join-Path $DestDir (Split-Path -Leaf $Path)
+        }
         # Unique even when the same file is replaced twice within one second
         # - the loop New-SettingsSnapshot and setup.sh's backup() both use.
         # Without it the second backup silently overwrites the first.
-        $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+        $bak = "$stem.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         $i = 1
-        while (Test-Path -LiteralPath $bak) { $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')-$i"; $i++ }
+        while (Test-Path -LiteralPath $bak) { $bak = "$stem.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')-$i"; $i++ }
         # ⛔ NEVER announce a backup that may not exist. This used to print
         # "backed up: ..." unconditionally after a SilentlyContinue copy, so every
         # such line was an unverified claim - and callers then deleted the
@@ -720,7 +732,7 @@ function Install-Skills {
                         # must not cost the user their work, and must not abort
                         # the whole install either - that failure mode is what
                         # Get-TreeSignature's try/catch exists to prevent.
-                        if (-not (Backup-Item $target)) {
+                        if (-not (Backup-Item $target (Join-Path (Split-Path -Parent $dest) "skill-backups"))) {
                             Write-Host "    skipped: $target left exactly as it was" -ForegroundColor Yellow
                             $script:SkillsSkipped++
                             continue
