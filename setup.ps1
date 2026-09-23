@@ -1,4 +1,4 @@
-﻿# sunstone setup (Windows)
+# sunstone setup (Windows)
 # Run: powershell -ExecutionPolicy Bypass -File setup.ps1 [-MemoryRepo <git-url-or-path>] [-CloneTo <dir>] [-SkipMemory] [-SkipOverlay]
 # Or right-click → Run with PowerShell (you will be prompted for the memory repo)
 #
@@ -164,6 +164,76 @@ function Install-File {
     $parent = Split-Path -Parent $Dst
     if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     Copy-Item -LiteralPath $Src -Destination $Dst -Force
+}
+
+# LINK_HOOKS is resolved exactly the way setup.sh's install_file() resolves it:
+# the key lives in the PERSONAL repo's sunstone.conf, read from the repo this
+# run resolved and otherwise from the recorded path file. That fallback is the
+# entire point - -SkipMemory leaves $MemoryRepoPath empty, and reading only it
+# is how the POSIX side once shipped a key that was documented, accepted and
+# silently ignored.
+function Test-LinkHooks {
+    $repo = $MemoryRepoPath
+    if (-not $repo) { $repo = Read-PathFile "$ClaudeDir\ai-memory-path" }
+    if (-not $repo) { return $false }
+    return ((Get-ConfValue $repo "LINK_HOOKS" "") -eq "1")
+}
+
+# Set once, so a machine that cannot make symlinks says so one time instead of
+# once per hook.
+$script:LinkHooksFellBack = $false
+
+# Install a hook so that updating the repo updates the LIVE hook - the whole
+# reason LINK_HOOKS exists. On Windows only a symlink can do that, and the two
+# cheaper-looking options are both wrong in ways worth recording:
+#
+#   - a junction (New-Item -ItemType Junction) is DIRECTORY-only, so it cannot
+#     link an individual hook file at all;
+#   - a hard link shares the inode, but git pull writes a new file and renames
+#     it over the old one, which SEVERS the link. The live hook would silently
+#     stop tracking the repo on the first update that actually mattered, which
+#     is worse than an honest copy.
+#
+# A symlink needs Developer Mode or an elevated shell. When it is refused we
+# fall back to a copy rather than leave the machine with no hook: copied hooks
+# still work, they just need setup re-run to pick up framework fixes.
+function Install-HookFile {
+    param([string]$Src, [string]$Dst)
+    if (-not (Test-LinkHooks)) { Install-File $Src $Dst; return }
+
+    $item = Get-Item -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+    if ($item -and $item.LinkType -eq "SymbolicLink") {
+        $tgt = @($item.Target)
+        if ($tgt -and $tgt[0] -eq $Src) { return }
+    }
+    if ($item) {
+        if (-not (Backup-Item $Dst)) {
+            Write-Host "    skipped: $Dst left exactly as it was" -ForegroundColor Yellow
+            return
+        }
+        Remove-Item -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+    }
+    $parent = Split-Path -Parent $Dst
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+
+    try {
+        New-Item -ItemType SymbolicLink -Path $Dst -Target $Src -ErrorAction Stop | Out-Null
+    } catch {
+        Install-File $Src $Dst
+        if (-not $script:LinkHooksFellBack) {
+            $script:LinkHooksFellBack = $true
+            Write-Host "  LINK_HOOKS=1, but this shell cannot create symlinks (needs Developer Mode or an elevated shell) - installed copies instead" -ForegroundColor Yellow
+        }
+    }
+}
+
+# Report what is actually on disk, not what was intended - a fallback to a copy
+# must not be announced as a link.
+function Get-InstallKind {
+    param([string]$Dst)
+    $i = Get-Item -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+    if ($i -and $i.LinkType -eq "SymbolicLink") { return "linked" }
+    return "installed"
 }
 
 function Test-Command {
@@ -407,19 +477,19 @@ function Write-ManualHooks {
 
 $memoryHooksOk = $false
 if ((Test-Path -LiteralPath $hkSrc) -and (Test-Command node)) {
-    Install-File $hkSrc $hkDst
+    Install-HookFile $hkSrc $hkDst
     # The write half of sync: SessionEnd commits memory (no network), SessionStart
     # pushes it on the next run. Split that way so ending a session is never slower.
-    Install-File $ciSrc $ciDst
-    Write-Host "  installed hooks\ai-memory-{sync,commit}.js"
+    Install-HookFile $ciSrc $ciDst
+    Write-Host "  $(Get-InstallKind $hkDst) hooks\ai-memory-{sync,commit}.js"
     if (Test-Path -LiteralPath $mdJs) {
-        Install-File $mdJs "$ClaudeHooks\memory-doctor-notice.js"
+        Install-HookFile $mdJs "$ClaudeHooks\memory-doctor-notice.js"
         $doctorCmd = "node `"$(ConvertTo-Fwd "$ClaudeHooks\memory-doctor-notice.js")`""
-        Write-Host "  installed hooks\memory-doctor-notice.js"
+        Write-Host "  $(Get-InstallKind "$ClaudeHooks\memory-doctor-notice.js") hooks\memory-doctor-notice.js"
     } elseif (Test-Path -LiteralPath $mdSh) {
-        Install-File $mdSh "$ClaudeHooks\memory-doctor-notice.sh"
+        Install-HookFile $mdSh "$ClaudeHooks\memory-doctor-notice.sh"
         $doctorCmd = "bash `"$(ConvertTo-Fwd "$ClaudeHooks\memory-doctor-notice.sh")`""
-        Write-Host "  installed hooks\memory-doctor-notice.sh (runs under Git for Windows' bash)"
+        Write-Host "  $(Get-InstallKind "$ClaudeHooks\memory-doctor-notice.sh") hooks\memory-doctor-notice.sh (runs under Git for Windows' bash)"
     }
     # A statusline is a PREFERENCE, not part of the memory layer, so the
     # framework ships none. A root that carries claude-setup\config\
@@ -938,5 +1008,6 @@ Write-Host '    QUEUE_NOW_MAX=3                             rows the NOW table m
 Write-Host '    BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on'
 Write-Host '    BUS_SIDE=""                                 this machine''s side (default: windows/mac/wsl/linux, detected)'
 Write-Host '    LINK_CLAUDE_MD=""                           1 = setup.sh symlinks the two CLAUDE.md files (ignored by setup.ps1)'
+Write-Host '    LINK_HOOKS=""                                1 = install hooks as symlinks, so a repo pull updates them (needs Developer Mode or an elevated shell; falls back to copies)'
 Write-Host ""
 Write-Host "Restart Claude Code to pick up the hooks."
