@@ -86,12 +86,22 @@ echo ""
 # sitting in the live list a pick away from being used. It was found on the Mac
 # and on JOYR9 (17 backups across three roots there, some three weeks old,
 # including a stale joy-frontend-framework whose description no longer matched).
-# Hooks and settings are unaffected - a .bak file beside them is inert - so they
-# keep the in-place default and only the skill path passes a directory.
+# ⚠️ "A .bak beside a hook is inert" was TRUE and has stopped being true. It held
+# while nothing enumerated those directories; now tooling does - a relinker walks
+# the shipped hook dirs, a doctor walks the installed one - and every such tool
+# has to remember to filter `*.bak*` or it reports a dated backup as a broken
+# hook. One of them got that wrong on its first run and warned about three files
+# no machine executes. Inert clutter is not free once something reads the
+# directory: it becomes a filter every future reader must reinvent, silently, and
+# a stale copy a person can mistake for the real file. So backups land OUTSIDE
+# the directories that get walked.
 backup() {
   # ${2:-} not $2: setup.sh runs under `set -u`, and install_copy calls this with
   # one argument, so a bare $2 aborts the whole installer on the first backup.
   local src="$1" dest_dir="${2:-}"
+  # Resolved at CALL time, not at definition time: CLAUDE_DIR is set further
+  # down this file, so a default computed up here would silently be "/backups".
+  [ -n "$dest_dir" ] || dest_dir="${BACKUP_DIR:-${CLAUDE_DIR:-$HOME/.claude}/backups}"
   if [ -f "$src" ] || [ -d "$src" ]; then
     local bak i=1 stem="$src"
     if [ -n "$dest_dir" ]; then
