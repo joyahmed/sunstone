@@ -904,8 +904,10 @@ predating its removal from this repo. The `statusLine` key and the script it nam
 together from the same root: `setup.sh` installs `~/.claude/statusline-command.sh` only when a
 root carries it, and `setup.ps1` the `.js` on the same condition. A blank line usually means `jq` is missing
 (the `.sh` script reads its input with it and renders empty without it) - install `jq`, or delete
-the `statusLine` key from `~/.claude/settings.json` to turn the statusline off. It has nothing to
-do with the memory layer either way.
+the `statusLine` key from `~/.claude/settings.json` to turn the statusline off. A script that falls
+back to a `node` twin when `jq` is absent has a second way to go blank: `node` must resolve in a
+**non-interactive** shell, and under a version manager that hooks the shell it usually does not.
+It has nothing to do with the memory layer either way.
 
 **A commit was refused in the middle of a merge or rebase.** It was not `pre-commit`: that guard
 stands down while git is mid-merge, cherry-pick, revert or rebase. Read the message again - it is

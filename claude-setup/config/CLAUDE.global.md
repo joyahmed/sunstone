@@ -25,3 +25,7 @@ When the user says "remember X" (or you learn a durable fact about them): edit t
 ## Session continuity
 
 Skills, roles, and decisions persist for the entire session. Do not abandon them as the conversation grows. On resume, check what the previous session left (the memory files above, any session-history tool you have) before asking the user what you were working on.
+
+## Non-interactive shells
+
+The shell you run a command in is not the user's terminal, and may not have their tools. Version managers that hook the shell - nvm's lazy stubs are the common case - define `node`, `npm`, `pnpm` and friends as **shell functions** in an interactive rc file and put nothing on `PATH`, so a non-interactive shell finds no `node` and no `pnpm` on a machine where node is plainly installed. **Run `which -a <tool>` before concluding a tool is missing**, and prefer an interactive shell form when running the user's own commands.
