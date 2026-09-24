@@ -901,4 +901,18 @@ cat <<'CONF'
     LINK_CLAUDE_MD=""                           1 = setup.sh symlinks ~/CLAUDE.md and ~/.claude/CLAUDE.md to the repo files
 CONF
 echo ""
+
+# ⛔ "The script exited 0" has never meant "this machine is set up", and every
+# install failure worth the name looks exactly like success: a hook that was
+# never linked, a settings entry naming a file that is gone, a guard whose
+# machine-local list is missing, an interpreter no non-interactive shell can
+# find. Each of those was found by a person noticing, days later. So setup ends
+# by CHECKING, and prints what it found.
+DOCTOR="$SCRIPT_DIR/claude-setup/scripts/install-doctor.sh"
+if [ -f "$DOCTOR" ]; then
+  echo "Checking this machine..."
+  bash "$DOCTOR" || true   # a finding is information, not a failed install
+  echo ""
+fi
+
 echo "Restart Claude Code to pick up the hooks."
