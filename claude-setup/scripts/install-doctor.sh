@@ -258,7 +258,13 @@ fi
 noexec=""
 for f in "$CFG"/hooks/*; do
   [ -f "$f" ] || continue
-  case "$(basename "$f")" in *.bak|*.bak.*|*.md|*.txt) continue;; esac
+  # ⚠️ Skip what is never executed BY PATH, or the check becomes noise - and a
+  # doctor that cries wolf is one people learn to scroll past, which costs more
+  # than the check is worth. A .ps1 is run by a PowerShell host, never by its
+  # mode bit; a dated backup is not a hook; .md/.txt are not scripts. The first
+  # version flagged three of these on a Linux box, where a PowerShell script's
+  # execute bit means precisely nothing.
+  case "$(basename "$f")" in *.bak*|*.md|*.txt|*.ps1|*.psm1) continue;; esac
   [ -x "$f" ] || noexec="$noexec $(basename "$f")"
 done
 if [ -n "$noexec" ]; then
