@@ -15,6 +15,15 @@
             "command": "[ -f graphify-out/graph.json ] && [ -f ~/.claude/hooks/graphify-nudge.mjs ] && command -v node >/dev/null 2>&1 && node ~/.claude/hooks/graphify-nudge.mjs || true"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/supermode-hands.mjs"
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -55,6 +64,14 @@
           {
             "type": "command",
             "command": "node ~/.claude/hooks/context-guard.mjs"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/agent-watch.mjs"
           }
         ]
       }

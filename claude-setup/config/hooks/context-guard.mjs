@@ -160,8 +160,9 @@ const msg = SUPERMODE
     `Under supermode you orchestrate: read, decide, and DELEGATE each slice to an agent so the agents spend ` +
     `context and this session does not. Reaching ${threshold}% is therefore a SYMPTOM - it means work was done ` +
     `here that an agent should have done. First ask what is still being done in-session that could be delegated. ` +
-    `Note you CANNOT read an agent's context usage - no gauge file and no transcript record is written for a ` +
-    `subagent - so keep slices small and require each agent to report when its own budget runs short. ` +
+    `You CAN read an agent's context usage - \`node ~/.claude/hooks/agent-watch.mjs --report\` prints every agent's ` +
+    `window, live or finished, from the subagent transcripts the harness writes beside this one, and that hook warns ` +
+    `you unprompted when one passes 60%. Keep each slice small enough that its agent finishes under that. ` +
     `If delegation can no longer save this session: ` + checkpoint +
     `then start the successor from the repo root: \`supermode --bg --permission-mode auto \"supermode: resume\"\` ` +
     `(if that launch is refused, delegate the same resume to an Agent-tool subagent instead), and stop. ` +
