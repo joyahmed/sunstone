@@ -118,8 +118,8 @@ clutter - the same rule the per-file copy helper applies.
 | `~/.claude/sunstone-path` | the directory `setup.sh` was run from | One line: the framework checkout. The notice hook runs `memory-doctor.js` from there, because the hook itself is a copy and cannot find the checkout from its own location. Move or delete the checkout and the notice goes quiet - nothing else this framework installs breaks. ⛔ **But check what else on your machine points into that directory before you move it.** A checkout is not self-describing: things outside it can name it, and neither `git status` nor this repo will mention them. On one machine `%APPDATA%\Zed` turned out to be a junction into `<checkout>/config/zed`, so the editor was reading and writing inside the working tree - renaming the directory would have silently reverted a live setting, and deleting it would have taken the whole editor config. Look for symlinks and junctions (`Get-Item <path> -Force` on Windows and read `LinkType`/`Target`; `ls -l` on POSIX) as well as path files, before you move anything. |
 | `~/.claude/settings.json` | merged by `claude-setup/config/merge-ai-memory-hook.py`, needs `python3` | Adds `ai-memory-sync.sh` and `memory-doctor-notice.sh` under `SessionStart` and `ai-memory-commit.sh` (async) under `SessionEnd`, each only if not already present. Every other key and hook is kept. Backed up first; the backup is removed again when the merge changed nothing. This is the one step with no Node fallback - without `python3` the three commands are printed instead, and the template merge two rows down still runs. |
 | `~/.git-hooks/pre-commit`, `~/.git-hooks/pre-push` | `claude-setup/config/git-hooks/` | The mixed-staging guard and the force-push guard. |
-| `~/.git-hooks/<name>`, `~/.git-templates/hooks/<name>` | `claude-setup/config/git-hooks/<name>` under **either root** | Overlay step. The framework ships `pre-commit` and `pre-push`; the personal repo may ship more, or replace either by carrying the same filename - its copies install last and win. This is where a hook that is a *policy* rather than a guard belongs: carrying the file is the opt-in, so no flag gates it and nobody else inherits it. |
-| `~/.git-templates/hooks/` | the same files as `~/.git-hooks/` | Clone-time template, a fallback if `core.hooksPath` is ever unset by hand. |
+| `~/.git-hooks/<name>` | `claude-setup/config/git-hooks/<name>` under **either root** | Overlay step. The framework ships `pre-commit` and `pre-push`; the personal repo may ship more, or replace either by carrying the same filename - its copies install last and win. This is where a hook that is a *policy* rather than a guard belongs: carrying the file is the opt-in, so no flag gates it and nobody else inherits it. |
+| `~/.git-templates/hooks/` | **nothing - kept deliberately EMPTY** | ⛔ A hook copied here is copied into every new clone's `.git/hooks/`, where the global hook chains into an identical copy of itself and `git commit` hangs, spawning an unbounded tree of shells. It used to be populated "as a fallback if `core.hooksPath` is ever unset by hand"; that fallback is worth far less than the fork bomb. Setup now **purges** this directory, so re-running it repairs a machine that has the copies. |
 | global git config | `core.hooksPath=~/.git-hooks`, `init.templateDir=~/.git-templates` | Makes the guards reach every repo on the machine, including ones that already exist. |
 | `~/.claude/git-config.previous` | appended by `setup.sh` | If either git setting already had a different value, the old `key=value` is recorded here (and printed in red) so [Uninstall](#uninstall) can restore it. |
 | `~/.claude/statusline-command.sh` | `claude-setup/config/statusline-command.sh` under either root | Overlay step, `chmod +x`, and the **first** one to run - but **the framework ships no statusline**, so from the framework root this step always reports `skipped` and nothing is written. It is a slot: a memory repo that carries the script gets it installed, and must also carry the `statusLine` key in its own `claude-setup/config/settings.json` so the two arrive together. See [What the framework deliberately does not ship](#what-the-framework-deliberately-does-not-ship). |
@@ -728,7 +728,7 @@ cd sunstone && git pull && ./setup.sh
 ```
 
 **A `git pull` of this repo changes nothing that runs.** Every hook executes from a copy under
-`~/.claude/hooks/`, `~/.git-hooks/` or `~/.git-templates/hooks/`. Until `setup.sh` runs again,
+`~/.claude/hooks/` or `~/.git-hooks/`. Until `setup.sh` runs again,
 the installed copy is the old one, and the framework will look installed from every angle except
 the one that matters. `memory-doctor`'s **wiring** and **drift** checks report the drift as a
 WARN. If you do not want to re-run the whole script, copy the changed file into place by hand and
@@ -997,11 +997,18 @@ cloned or `git init`ed received its own copies of `pre-commit` and `pre-push` in
 Unsetting `core.hooksPath` makes those copies live repo-local hooks: they keep guarding, and they
 shadow a `husky`-style hook a project later tries to install there.
 
-⚠️ **The residue bites before you unset anything.** The shipped hooks deliberately chain to
-`<repo>/.git/hooks/<hook>` at the end, so with `core.hooksPath` still set the global hook runs
-**and then execs the repo-local copy** - both fire, and you see the guard's message printed twice.
-That is the symptom to recognise: a duplicated `pre-push` or `pre-commit` warning means this repo
-has template residue, not that the guard is broken. Worse, the copies are frozen at whatever
+⛔ **The residue bites before you unset anything, and until 2026-09-24 it hung the machine.**
+The shipped hooks deliberately chain to `<repo>/.git/hooks/<hook>` at the end, so with
+`core.hooksPath` still set the global hook runs **and then execs the repo-local copy**. That copy
+is identical, so it chains again - and the self-chain guard that was supposed to stop this compared
+two path strings that MSYS spells differently for the same file, so it could never fire.
+`git commit` hung in every affected repo, spawning an unbounded tree of shells; `timeout` does not
+bound it. Fixed two ways: the guard now compares file identity (`-ef`, dev+inode, spelling-
+invariant), and setup no longer populates the template dir at all.
+
+With both fixes in place the remaining symptom is the mild one: the global hook runs **and then**
+the repo-local copy, so you see the guard's message printed twice. A duplicated `pre-push` or
+`pre-commit` warning means this repo has template residue, not that the guard is broken. Worse, the copies are frozen at whatever
 generation was current when the repo was created, so an old one can still be matching a stale
 repo-name list while the global copy reads your current `sunstone.conf`.
 

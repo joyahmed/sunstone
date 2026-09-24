@@ -609,6 +609,13 @@ if (Test-Path -LiteralPath "$ScriptDir\claude-setup\config\git-hooks") {
     Write-Host "Preparing global git hooks (memory staging guard + force-push guard)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $GitHooks, $GitTemplates | Out-Null
 
+    # ⛔ ~\.git-templates\hooks must stay EMPTY - see the git-hooks step for why
+    # a hook copied there fork-bombs every fresh clone. The hook files themselves
+    # are removed per name as each root installs; these are the backups an older
+    # setup.ps1 left beside them, which git would copy into a clone just the same.
+    Get-ChildItem -LiteralPath $GitTemplates -Filter '*.bak.*' -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
     # Record whatever global git config is about to be replaced, so an
     # uninstall can restore it rather than only unset it.
     $prevGitConfig = "$ClaudeDir\git-config.previous"
@@ -822,7 +829,7 @@ function Install-ClaudeGlobal {
     Step-End "CLAUDE.global.md" $Root $n "→ ~\.claude\CLAUDE.md"
 }
 
-# claude-setup\config\git-hooks\* → ~\.git-hooks\ and ~\.git-templates\hooks\.
+# claude-setup\config\git-hooks\* → ~\.git-hooks\ ONLY. Never the template dir.
 # An overlay step like every other one: whatever both roots ship, the personal
 # copy lands last and wins, and a guard only the personal repo carries is
 # installed from there alone. Mirrors setup.sh:step_git_hooks.
@@ -850,13 +857,24 @@ function Install-GitHooks {
                 Write-Host "    logic no longer runs: move it into <repo>/.git/hooks/$($f.Name) - the shipped one chains to it."
             }
             Install-File $f.FullName $dst
-            # Keep the clone-time template in step, as a fallback if
-            # core.hooksPath is ever unset by hand.
-            Install-File $f.FullName "$GitTemplates\$($f.Name)"
+            # ⛔ DO NOT also install into ~\.git-templates\hooks. init.templateDir
+            # copies that directory into every new clone's .git\hooks, so the hook
+            # core.hooksPath already runs finds an IDENTICAL COPY OF ITSELF to
+            # chain into. `git commit` then hangs in every fresh clone, spawning
+            # an unbounded tree of shells - and `timeout` does not bound it.
+            #
+            # It shipped that way "as a fallback if core.hooksPath is ever unset
+            # by hand". That fallback is worth far less than the fork bomb it
+            # costs, and core.hooksPath is set unconditionally earlier in this
+            # same run anyway.
+            #
+            # Purge rather than merely skip, so a machine that already carries
+            # the copies is REPAIRED by running setup again.
+            Remove-Item -LiteralPath "$GitTemplates\$($f.Name)" -Force -ErrorAction SilentlyContinue
             $n++
         }
     }
-    Step-End "git-hooks" $Root $n "$n → ~\.git-hooks, ~\.git-templates\hooks"
+    Step-End "git-hooks" $Root $n "$n → ~\.git-hooks"
 }
 
 # claude-setup\config\supermode.settings.json → ~\.claude\supermode.settings.json and
@@ -961,7 +979,7 @@ if ($gitHooksOk) {
     $ghLive = (Get-ChildItem -LiteralPath "$HomeDir\.git-hooks" -File -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty Name | Where-Object { $_ -notmatch '\.bak\.' } | Sort-Object) -join ','
     if (-not $ghLive) { $ghLive = "none" }
-    Write-Host "  git hooks:     $HomeDir\.git-hooks\{$ghLive} (core.hooksPath) + $HomeDir\.git-templates\hooks"
+    Write-Host "  git hooks:     $HomeDir\.git-hooks\{$ghLive} (core.hooksPath; the template dir is kept EMPTY on purpose)"
 } else {
     Write-Host "  git hooks:     NOT installed (claude-setup\config\git-hooks missing from this checkout)" -ForegroundColor Yellow
 }

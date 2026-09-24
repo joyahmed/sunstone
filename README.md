@@ -138,7 +138,7 @@ Twelve steps, run once from the framework root and again from your memory repo. 
   `~/.local/bin/`, and two slash commands, `/supermode` and `/supercode`, in
   `~/.claude/commands/`. Nothing in it changes an ordinary session; see
   [Supermode and supercode](#supermode-and-supercode);
-- **two git hooks** in `~/.git-hooks/` (and the clone-time template `~/.git-templates/hooks/`),
+- **two git hooks** in `~/.git-hooks/` (`~/.git-templates/hooks/` is kept deliberately empty),
   reached by a global `core.hooksPath`;
 - **`~/.claude/CLAUDE.md`**, rewritten on every run from the shipped `CLAUDE.global.md` - 27
   lines on where a memory goes, how to write one, and session continuity. Keep anything you want
@@ -161,8 +161,8 @@ behaviour: what lands is decided by what the two roots ship, not by switches.
 `setup.sh` is idempotent and backs up anything it overwrites - the skills step is the one that
 replaces a whole `<name>` directory rather than merging it, backing up a differing one beside
 itself first. Re-running it is also how an update takes effect: **`git pull` on this repo changes
-nothing that runs**, because every hook executes from a copy under `~/.claude/hooks/`,
-`~/.git-hooks/` or `~/.git-templates/hooks/`. `memory-doctor`'s wiring check reports that drift
+nothing that runs**, because every hook executes from a copy under `~/.claude/hooks/`
+or `~/.git-hooks/`. `memory-doctor`'s wiring check reports that drift
 for the memory hooks under `~/.claude/hooks/`, and its [drift check](#config-drift) for the other
 hooks, the two `CLAUDE.md` files and the statusline; it never reads the two installed git
 guards, so drift in those is only ever fixed by re-running `setup.sh`.

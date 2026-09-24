@@ -372,6 +372,12 @@ echo ""
 echo -e "${CYAN}Preparing global git hooks (memory staging guard + force-push guard)...${NC}"
 mkdir -p "$HOME_DIR/.git-hooks" "$HOME_DIR/.git-templates/hooks"
 
+# ⛔ ~/.git-templates/hooks must stay EMPTY - see step_git_hooks for why a hook
+# copied there fork-bombs every fresh clone. The hook files themselves are
+# removed per name as each root installs; these are the backups an older
+# setup.sh left beside them, which git would copy into a clone just the same.
+rm -f "$HOME_DIR/.git-templates/hooks/"*.bak.* 2>/dev/null || true
+
 # Record whatever global git config is about to be replaced, so an uninstall
 # can restore it rather than only unset it.
 PREV_GIT_CONFIG="$HOME_DIR/.claude/git-config.previous"
@@ -661,7 +667,7 @@ step_subagents() {
 # COPIED here, never registered: the framework's memory hooks are registered
 # by setup.sh, anything else - a personal hook in particular - by the
 # settings.json of the root that ships it (step_settings).
-# claude-setup/config/git-hooks/* → ~/.git-hooks/ and ~/.git-templates/hooks/.
+# claude-setup/config/git-hooks/* → ~/.git-hooks/ ONLY. Never the template dir.
 # An overlay step like every other one: whatever both roots ship, the personal
 # copy lands last and wins, and a guard only the personal repo carries is
 # installed from there alone. That is what lets a policy hook live in a
@@ -687,12 +693,22 @@ step_git_hooks() {
       echo    "    no longer runs: move it into <repo>/.git/hooks/$name - the shipped $name chains to it."
     fi
     install_file "$f" "$HOME_DIR/.git-hooks/$name"
-    # Keep the clone-time template in step, as a fallback if core.hooksPath is
-    # ever unset by hand.
-    install_file "$f" "$HOME_DIR/.git-templates/hooks/$name"
+    # ⛔ DO NOT also install into ~/.git-templates/hooks. init.templateDir copies
+    # that directory into every new clone's .git/hooks, so the hook that
+    # core.hooksPath already runs finds an IDENTICAL COPY OF ITSELF to chain
+    # into. `git commit` then hangs in every fresh clone, spawning an unbounded
+    # tree of shells - and `timeout` does not bound it.
+    #
+    # It shipped that way "as a fallback if core.hooksPath is ever unset by
+    # hand". That fallback is worth far less than the fork bomb it costs, and
+    # core.hooksPath is set unconditionally earlier in this same run anyway.
+    #
+    # Purge rather than merely skip, so a machine that already carries the
+    # copies is REPAIRED by running setup again.
+    rm -f "$HOME_DIR/.git-templates/hooks/$name"
     n=$((n + 1))
   done
-  step_end git-hooks "$root" "$n" "$n → ~/.git-hooks, ~/.git-templates/hooks"
+  step_end git-hooks "$root" "$n" "$n → ~/.git-hooks"
 }
 
 step_hooks() {
@@ -829,7 +845,7 @@ echo "Installed:"
 # which guards land now depends on what each root ships, so a hardcoded list
 # would go stale the moment a personal repo carries one of its own.
 gh_live="$(ls "$HOME_DIR/.git-hooks" 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
-echo "  git hooks:     $HOME_DIR/.git-hooks/{${gh_live:-none}} (core.hooksPath) + $HOME_DIR/.git-templates/hooks"
+echo "  git hooks:     $HOME_DIR/.git-hooks/{${gh_live:-none}} (core.hooksPath; the template dir is kept EMPTY on purpose)"
 echo "  session hooks: $HOME_DIR/.claude/hooks/{ai-memory-sync,ai-memory-commit,memory-doctor-notice}.sh"
 echo "  framework:     $SCRIPT_DIR  (recorded in $HOME_DIR/.claude/sunstone-path for the doctor notice)"
 echo ""
