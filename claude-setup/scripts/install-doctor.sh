@@ -49,6 +49,7 @@ fi
 MEMORY_REPO_HOOKS="${MEMORY_REPO_HOOKS:-${MEM:+$MEM/claude-setup/config/hooks}}"
 MEMORY_REPO_MIGRATIONS="${MEMORY_REPO_MIGRATIONS:-${MEM:+$MEM/claude-setup/migrations}}"
 
+settings_path="$CFG/settings.json"
 problems=0; warnings=0
 ok()   { [ "$QUIET" = "1" ] || printf '  ✔ %s\n' "$1"; }
 warn() { printf '  ⚠ %s\n' "$1"; warnings=$((warnings+1)); }
@@ -77,6 +78,7 @@ if [ -n "$missing_hooks" ]; then
       done
     done
     ok "hooks: linked what was missing (restart to load them)"
+    [ "$QUIET" = "1" ] || echo "    note: linking a file does not register it - the next check says whether it will actually run"
   else
     bad "hooks not installed:$missing_hooks   (re-run setup, or this script with --fix)"
   fi
@@ -84,13 +86,58 @@ else
   ok "hooks: every shipped hook is installed"
 fi
 
+# --- 1b. a hook that SHIPPED but was never REGISTERED -------------------------
+# ⛔ The trap that makes check 1 dangerous on its own: linking a hook file does
+# not run it. A hook runs because the live settings.json NAMES it, and the
+# settings merge happens only in setup - so a release can ship a hook, a machine
+# can link it, the ⛔ above turns green, and the hook never fires once. `--fix`
+# would have manufactured exactly that false green. Found by a peer running this
+# on a machine where both new hooks were shipped, unlinked AND unregistered.
+#
+# So compare the SHIPPED settings' hook commands against the LIVE ones, rather
+# than files against a directory.
+if command -v python3 >/dev/null 2>&1 && [ -f "$settings_path" ]; then
+  unregistered=$(python3 - "$settings_path" "$REPO/claude-setup/config/settings.json" "${MEM:+$MEM/claude-setup/config/settings.json}" <<'DOCTOR_PY' 2>/dev/null
+import json,sys,re
+def refs(path):
+    out=set()
+    if not path: return out
+    try: d=json.load(open(path,encoding="utf-8"))
+    except Exception: return out
+    def walk(o):
+        if isinstance(o,dict):
+            c=o.get("command")
+            if isinstance(c,str):
+                for m in re.findall(r'hooks[/\\]([A-Za-z0-9._-]+)', c):
+                    out.add(m)
+            for v in o.values(): walk(v)
+        elif isinstance(o,list):
+            for v in o: walk(v)
+    walk(d.get("hooks",{}))
+    return out
+live = refs(sys.argv[1])
+shipped = set()
+for p in sys.argv[2:]:
+    shipped |= refs(p)
+for n in sorted(shipped - live):
+    print(n)
+DOCTOR_PY
+)
+  if [ -n "$unregistered" ]; then
+    for n in $unregistered; do
+      bad "$n ships in the framework settings but is NOT registered in this machine's settings.json - linking the file does not make it run; only setup's settings merge does"
+    done
+  else
+    ok "settings: every shipped hook is registered here"
+  fi
+fi
+
 # --- 2. no settings entry points at a script that is not there ----------------
 # A hook command naming a missing file fails on EVERY tool call, and the only
 # symptom is that the thing it did stops happening.
-settings="$CFG/settings.json"
-if [ -f "$settings" ]; then
+if [ -f "$settings_path" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    dangling=$(python3 - "$settings" "$CFG" <<'PY' 2>/dev/null
+    dangling=$(python3 - "$settings_path" "$CFG" <<'PY' 2>/dev/null
 import json,sys,os,re
 p,cfg=sys.argv[1],sys.argv[2]
 try: d=json.load(open(p,encoding="utf-8"))
@@ -121,7 +168,7 @@ PY
     warn "settings: no python3, cannot check for dangling hook commands"
   fi
 else
-  warn "settings: $settings does not exist"
+  warn "settings: $settings_path does not exist"
 fi
 
 # --- 3. an interpreter that a NON-INTERACTIVE shell can find ------------------
@@ -130,9 +177,17 @@ fi
 # systemd, ssh and status lines have no node on a machine that plainly has one.
 # ⚠️ "not on PATH" and "not installed" are different answers and only one is
 # actionable. Look where interpreters actually live before saying it is absent -
-# the first version of this check reported "not found at all" on a machine with
-# three versions installed, which is the same overconfident shape it exists to
-# catch.
+# the first version reported "not found at all" on a machine with three versions
+# installed, the same overconfident shape this exists to catch.
+#
+# ⛔ AND IT MUST NAME THE SHELL IT ASKED. On a Windows box this runs under Git
+# Bash, where node is on PATH and always was - while the shell that actually
+# breaks is the Linux userland's, with the lazy version-manager stubs. The first
+# version answered about Git Bash and printed a green "resolvable from a
+# non-interactive shell": true, about the wrong shell, which is worse than a red
+# because nobody re-checks a green. A peer caught it on the one machine where
+# the distinction exists. A check that names its scope cannot be misread later.
+host_desc=$(uname -s 2>/dev/null | cut -c1-12 || echo shell)
 node_anywhere=""
 command -v node >/dev/null 2>&1 && node_anywhere=$(command -v node)
 if [ -z "$node_anywhere" ]; then
@@ -142,11 +197,22 @@ if [ -z "$node_anywhere" ]; then
   done
 fi
 if [ -z "$node_anywhere" ]; then
-  warn "node: not installed anywhere this can see - hooks written in node cannot run"
+  warn "node [$host_desc]: not installed anywhere this can see - hooks written in node cannot run"
 elif sh -c 'command -v node >/dev/null 2>&1'; then
-  ok "node: resolvable from a non-interactive shell"
+  ok "node [$host_desc]: resolvable from a non-interactive shell"
 else
-  warn "node is installed (${node_anywhere#$HOME/}) but INVISIBLE to a non-interactive shell - hooks, git hooks, cron and status lines will not find it. Put its bin on PATH from a non-interactive rc; a lazy version manager's shell function is not enough."
+  warn "node [$host_desc]: installed (${node_anywhere#$HOME/}) but INVISIBLE to a non-interactive shell - hooks, git hooks, cron and status lines will not find it. Put its bin on PATH from a non-interactive rc; a lazy version manager's shell function is not enough."
+fi
+# The other side of a two-shell machine. A Windows box runs the hooks under Git
+# Bash AND holds a Linux userland whose non-interactive shell is where the trap
+# actually lives; answering only for the host is how the green above came to be
+# written about the wrong shell.
+if command -v wsl.exe >/dev/null 2>&1; then
+  if wsl.exe -e bash -lc 'command -v node >/dev/null 2>&1' >/dev/null 2>&1; then
+    ok "node [wsl]: resolvable from a non-interactive shell there too"
+  else
+    warn "node [wsl]: NOT resolvable from a non-interactive \`wsl -e bash -lc\` - anything run inside the Linux userland (builds, hooks, cron, a terminal seam) has no node, whatever the host side reports"
+  fi
 fi
 
 # --- 4. the git guards are actually wired ------------------------------------
@@ -183,7 +249,25 @@ if [ -e "$CFG/hooks/public-privacy-guard.sh" ] || [ -e "$(git config --global co
     || warn "privacy guard: no $CFG/public-repos - it guards only the framework repo here, silently"
 fi
 
-# --- 6. migrations that have not run -----------------------------------------
+# --- 6. an installed hook that cannot be executed -----------------------------
+# A script committed 100644 - written on a filesystem with no execute bit, or
+# copied with `cp`, which preserves mode - dies with "Permission denied", exit
+# 126, at the FIRST hop of any chain that calls it by path. A whole shell
+# install was unreachable that way, and the failure names permissions rather
+# than the missing bit, so it reads like a sudo problem.
+noexec=""
+for f in "$CFG"/hooks/*; do
+  [ -f "$f" ] || continue
+  case "$(basename "$f")" in *.bak|*.bak.*|*.md|*.txt) continue;; esac
+  [ -x "$f" ] || noexec="$noexec $(basename "$f")"
+done
+if [ -n "$noexec" ]; then
+  warn "hooks present but NOT executable:$noexec - fine while something calls them as \`bash <file>\`, exit 126 the moment anything calls them by path"
+else
+  ok "hooks: all executable"
+fi
+
+# --- 7. migrations that have not run -----------------------------------------
 migs="${MEMORY_REPO_MIGRATIONS:-}"
 if [ -n "$migs" ] && [ -d "$migs" ]; then
   pending=""
