@@ -54,11 +54,17 @@ about 60% of its own window. For each:
    whatever the repo has. Green or it does not land. Two failures in a row on the same
    gate → stop and diagnose (delegate the diagnosis), do not try a third variation.
 4. **Commit** - on green, in the person's own commit voice, one slice per commit.
-5. **Handoff** - after EVERY slice, before the next: a session note (`docs/ai-memory/
-   session-<date>.md` or wherever the repo keeps them) saying what landed, what is next,
-   what is blocked, with the exact numbers a fresh session cannot re-derive (commit hashes,
-   test counts, the failing case, how many agents and what each cost), and the work-queue
-   row moved. You cannot see your own context gauge; the handoff is written every time so
+5. **Handoff** - after EVERY slice, before the next: a session note saying what landed, what
+   is next, what is blocked, with the exact numbers a fresh session cannot re-derive (commit
+   hashes, test counts, the failing case, how many agents and what each cost), and the
+   work-queue row moved.
+   ⛔ **Where it goes depends on whether the repo is public.** A private repo: `docs/ai-memory/
+   session-<date>.md`, or wherever it keeps them. A repo that is PUBLIC or headed there: the
+   private memory store instead, under a folder named for the repo - never `docs/ai-memory/`
+   in the repo itself. A session note names other projects, machine paths and working habits;
+   that is what makes it useful and what makes it unpublishable. The privacy guard enforces
+   this at commit time, so a run that writes the handoff to `docs/ai-memory/` in a public repo
+   writes it and then fails its own commit, every slice, until someone notices. You cannot see your own context gauge; the handoff is written every time so
    the last one is always current.
 6. **Say it** - the person is not watching the terminal, so tell them out loud, once per
    slice, right after the handoff: `bash ~/.claude/hooks/say.sh "<what landed> is done.

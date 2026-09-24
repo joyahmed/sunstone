@@ -20,8 +20,21 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 HOOK="$HERE/../supermode-hands.mjs"
-NODE="${NODE:-$(command -v node || true)}"
-[ -x "$NODE" ] || { echo "no node interpreter - set NODE=/path/to/node"; exit 2; }
+# ⛔ `[ -x "$(command -v node)" ]` IS THE WRONG TEST, and it fails on a machine
+# where node is perfectly available. When node is a shell FUNCTION - nvm's lazy
+# stub, or the agent shell's own snapshot - `command -v` prints the bare word
+# `node`, not a path, so the -x test on it is false and this battery would
+# refuse to run somewhere it works fine. Reported from a machine that hit it.
+# Ask whether the interpreter RUNS, which is the only thing that matters here.
+NODE="${NODE:-node}"
+if ! "$NODE" --version >/dev/null 2>&1; then
+	# Not on PATH and not a function here: look where node actually installs.
+	for cand in "${NVM_BIN:-}/node" /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node \
+	            "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node; do
+		[ -x "$cand" ] && { NODE="$cand"; break; }
+	done
+fi
+"$NODE" --version >/dev/null 2>&1 || { echo "no node interpreter that runs - set NODE=/path/to/node"; exit 2; }
 [ -f "$HOOK" ] || { echo "hook not found beside the test: $HOOK"; exit 2; }
 
 SID=hookselftest
