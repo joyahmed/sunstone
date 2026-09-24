@@ -59,10 +59,23 @@ chain_local() {
 	GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || exit 0
 	LOCAL="$GIT_DIR_PATH/hooks/pre-commit"
 
-	# Belt and braces: never chain to ourselves even if the paths ever coincide.
-	case "$(CDPATH= cd -- "$(dirname -- "$LOCAL")" 2>/dev/null && pwd)" in
-		"$HERE") exit 0 ;;
-	esac
+	# Belt and braces: never chain to ourselves. Compare FILE IDENTITY (-ef: same
+	# dev+inode), not directory-path strings.
+	#
+	# ⛔ The string compare this replaces COULD NOT FIRE, and that was the fork
+	# bomb. The two sides are spelled through different translation paths: $LOCAL
+	# is git-dir-relative (`git rev-parse --git-dir` prints a bare `.git`, so its
+	# dirname lexically extends $PWD and is never translated), while $0 is
+	# absolute and cd+pwd resolves it through MSYS's mount-alias layer. Same
+	# physical directory, two different strings - measured as `/tmp/<rest>/hooks`
+	# against `C:/<home>/AppData/Local/Temp/<rest>/hooks` - so `case` never
+	# matched, every hop re-exec'd an identical script, and every hop repeated
+	# the identical failing comparison. Unbounded.
+	#
+	# ⚠️ `-ef` compares dev+inode, so it is spelling-invariant. Do NOT "simplify"
+	# this to a realpath compare: realpath printed THREE different strings for the
+	# three spellings of this one file when it was measured.
+	[ "$LOCAL" -ef "$0" ] && exit 0
 
 	[ -x "$LOCAL" ] && exec "$LOCAL" "$@"
 	exit 0
