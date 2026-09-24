@@ -100,14 +100,62 @@ if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
   const cmd = String(args.command || "");
   // Only the forms that WRITE a file. A redirect into /dev/null, into the
   // scratchpad or into an allowlisted note is not an edit of the work.
+  //
+  // ⛔ SCAN THE SHELL SYNTAX, NOT THE TEXT. The first version matched `>` and
+  // `tee` anywhere in the string, which denied the orchestrator's own work:
+  //     git commit -m "slice 2 -> gate passed"    the arrow is PROSE
+  //     git log --format="%h => %s"               so is this one
+  //     pnpm build | tee <scratchpad>/build.log   an allowed target
+  // Commits are the one thing the contract promises stay the orchestrator's, so
+  // a guard that denies them is worse than no guard - and each false deny burns
+  // one of the six the breaker allows. Found by a peer session reading the
+  // pushed file, 2026-09-25.
+  //
+  // A redirect operator cannot appear inside quotes and a heredoc body is data,
+  // so both are removed before looking for operators; targets are read from a
+  // second copy where the quotes are peeled off but their CONTENTS survive, so a
+  // quoted path is still checked.
+  const stripHeredocs = (t) =>
+    t.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?(?:\n[ \t]*\2[ \t]*(?:\n|$)|$)/g, " ");
+  const base = stripHeredocs(cmd);
+  const forOps = base.replace(/'[^']*'/g, " '' ").replace(/"(?:[^"\\]|\\.)*"/g, ' "" ');
+  const forArgs = base.replace(/'([^']*)'/g, "$1").replace(/"((?:[^"\\]|\\.)*)"/g, "$1");
+
   const targets = [];
   let m;
-  const redirect = /(?<![0-9<>])>>?\s*("[^"]+"|'[^']+'|[^\s;|&)]+)/g;
-  while ((m = redirect.exec(cmd))) targets.push(m[1].replace(/^['"]|['"]$/g, ""));
-  const inplace = /(^|[\s;|&(])(sed\s+(-[^\s]*\s+)*-i|perl\s+(-[^\s]*\s+)*-p?i|tee\b)/.test(cmd);
-  const bad = targets.filter((t) => t !== "/dev/null" && !allowed(t));
-  if (!inplace && !bad.length) process.exit(0);
-  path = bad[0] || "(in-place edit)";
+  const redirect = /(?<![0-9<>])>>?\s*([^\s;|&)]+)/g;
+  while ((m = redirect.exec(forOps))) targets.push(m[1]);
+
+  // `tee`, `sed -i`, `perl -pi` write the files they are GIVEN - so read the
+  // files they are given, rather than denying the command for existing.
+  const writerTargets = (seg, kind) => {
+    const tok = seg.trim().split(/\s+/).slice(1);      // drop the command itself
+    const out = [];
+    let skipNext = false, scriptSeen = kind !== "sed";  // sed's first bare arg is its script
+    for (const t of tok) {
+      if (skipNext) { skipNext = false; scriptSeen = true; continue; }
+      if (/^-/.test(t)) { if (/^(-e|-E|--expression|-f|--file)$/.test(t)) skipNext = true; continue; }
+      if (!scriptSeen) { scriptSeen = true; continue; }
+      out.push(t);
+    }
+    return out;
+  };
+  // ⚠️ The `-i` lookahead must allow the flag to come FIRST. Requiring `\s-i`
+  // meant `sed -i 's/a/b/' src/app.ts` - the commonest form there is - matched
+  // nothing and sailed through. Caught by the test battery, not by reading.
+  for (const re of [/(?:^|[;|&(]\s*)(tee\s+[^;|&)]*)/g,
+                    /(?:^|[\s;|&(])(sed\s+(?=(?:[^;|&)]*\s)?-i)[^;|&)]*)/g,
+                    /(?:^|[\s;|&(])(perl\s+(?=(?:[^;|&)]*\s)?-[a-zA-Z]*i)[^;|&)]*)/g]) {
+    let w;
+    while ((w = re.exec(forArgs))) {
+      const kind = w[1].startsWith("sed") ? "sed" : w[1].startsWith("perl") ? "perl" : "tee";
+      targets.push(...writerTargets(w[1], kind));
+    }
+  }
+
+  const bad = targets.filter((t) => t !== "/dev/null" && !/^\/dev\//.test(t) && !allowed(t));
+  if (!bad.length) process.exit(0);   // nothing written, or everything written is the orchestrator's own
+  path = bad[0];
 } else {
   process.exit(0);
 }
