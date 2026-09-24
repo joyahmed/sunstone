@@ -153,6 +153,24 @@ if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
     }
   }
 
+  // `dd of=FILE` - the same shape as tee and sed -i, the target just rides on a
+  // flag. Reported by a peer throwing shapes at the battery, 2026-09-25.
+  {
+    let w;
+    const dd = /(?:^|[\s;|&(])dd\s+[^;|&)]*?\bof=([^\s;|&)]+)/g;
+    while ((w = dd.exec(forArgs))) targets.push(w[1]);
+  }
+
+  // ⛔ THE CEILING, stated so nobody mistakes this for a boundary: an
+  // interpreter can always write a file, and no text scan can see it without
+  // running the code - `python3 -c 'open("src/x.ts","w")'` goes through, and so
+  // does a redirect written INSIDE an awk or perl program, because stripping
+  // quotes is exactly what makes `git commit -m "a -> b"` work. Those are false
+  // ALLOWS on a guard that already fails open by design: the mode leaks a
+  // little, nothing breaks. A false DENY is the expensive direction - it blocks
+  // real work and burns one of the six the breaker allows. This is a nudge
+  // against absent-minded editing with a one-command escape hatch, not a
+  // sandbox, and hardening it into one would cost the thing that makes it safe.
   const bad = targets.filter((t) => t !== "/dev/null" && !/^\/dev\//.test(t) && !allowed(t));
   if (!bad.length) process.exit(0);   // nothing written, or everything written is the orchestrator's own
   path = bad[0];

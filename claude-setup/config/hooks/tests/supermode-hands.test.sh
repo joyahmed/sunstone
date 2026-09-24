@@ -72,6 +72,28 @@ t deny  "tee into a quoted source path"       'pnpm build | tee "src/out.txt"'
 t deny  "append into a source file"           'echo x >> src/app.ts'
 t deny  "redirect into a nested source file"  'echo x > src/deep/nested/file.ts'
 
+echo "shapes a second reader threw at it - prose first, all must ALLOW:"
+t allow "commit message about redirection"    'git commit -m "fix: rewrite > into >> in logger"'
+t allow "grep for an arrow in source"         'grep -r "a -> b" src/'
+t allow "heredoc body containing a redirect"  'git commit -F - <<MSG
+echo hi > src/evil.ts
+MSG'
+
+echo "writes in odd shapes - must DENY:"
+t deny  "command substitution hiding a write" 'echo $(echo hi > src/app.ts)'
+t deny  "dd with the target on a flag"        'dd if=/dev/zero of=src/app.ts'
+
+# ⛔ DOCUMENTED CEILING, not a gap anyone should "fix" by hardening the scanner.
+# An interpreter can always write a file, and a redirect written INSIDE an awk
+# or perl program lives in a quoted string - and stripping quoted strings is
+# precisely what lets `git commit -m "a -> b"` through. Closing these means
+# parsing every embedded language, for a guard that fails open on purpose. They
+# are false ALLOWS: the mode leaks, nothing breaks. The expensive direction is a
+# false DENY, which blocks real work and burns the breaker.
+echo "the ceiling of a text scan - ALLOW is the accepted answer here:"
+t allow "redirect inside an awk program"      'awk "{print > \"src/out.ts\"}" in.txt'
+t allow "an interpreter writing a file"       'python3 -c "open(\"src/x.ts\",\"w\").write(1)"'
+
 rm -f "$CTX/$SID.handsdeny" "$CTX/$SID.hands"
 echo
 echo "pass=$pass fail=$fail"

@@ -33,6 +33,14 @@ REPO="$1"
 [ -n "$REPO" ] || exit 0
 [ "$ALLOW_PERSONAL_IN_PUBLIC" = "1" ] && exit 0
 
+# The list of public repos is MACHINE-LOCAL, never hardcoded here: this file
+# ships in the public repo it guards, so naming someone's repos in it would be
+# the very leak it exists to stop. ~/.claude/public-repos, one name per line,
+# `#` comments allowed - the same pattern as ~/.claude/bus-side. Env first for
+# a one-off, then the file, then the single safe default.
+if [ -z "${PUBLIC_REPOS:-}" ] && [ -r "$HOME/.claude/public-repos" ]; then
+	PUBLIC_REPOS=$(sed 's/#.*//' "$HOME/.claude/public-repos" 2>/dev/null | tr '\n' ' ')
+fi
 PUBLIC_REPOS="${PUBLIC_REPOS:-sunstone}"
 
 matched=0
@@ -40,6 +48,36 @@ for r in $PUBLIC_REPOS; do
 	[ "$r" = "$REPO" ] && matched=1
 done
 [ "$matched" = "1" ] || exit 0
+
+# --- assistant memory never goes into a public repo -------------------------
+# A separate check from the personal-content scan below, because it is about
+# the PATH, not the lines: docs/ai-memory holds session notes, and session
+# notes name other projects, machine paths, working habits and the queue. They
+# are written the way private notes are written, which is the point of them.
+#
+# This existed as a rule and as a memory file, and two public repos ended up
+# carrying it anyway - 12 files, found by a scan rather than by anything
+# failing. A rule that lives only in prose is one an assistant re-learns after
+# breaking it; that is the same reasoning that made AI co-author trailers a git
+# hook rather than a paragraph.
+#
+# Deletions are not blocked - only adding or modifying - so the forward fix
+# (move the notes to the private memory repo and remove them here) always works.
+MEMPATHS=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '(^|/)docs/ai-memory/' || true)
+if [ -n "$MEMPATHS" ]; then
+	echo "⛔ pre-commit: refusing to add assistant memory to a public repo ($REPO)"
+	echo
+	printf '     %s\n' $MEMPATHS
+	echo
+	echo "   docs/ai-memory holds session notes - other projects by name, machine"
+	echo "   paths, working habits, the queue. This repo is world-readable."
+	echo
+	echo "   Put them in the private memory repo instead, under a folder named"
+	echo "   for this repo, and index them there as usual."
+	echo
+	echo "   Removing such files is always allowed; only adding them is refused."
+	exit 1
+fi
 
 # --- what counts as personal ------------------------------------------------
 # Derived, never hardcoded: the full name, the email, and the home-directory
