@@ -2,9 +2,25 @@
 # ai-memory-commit.sh - SessionEnd hook. The write half of memory sync.
 #
 # Commits anything written under the memory tree (MEMORY_DIR, default
-# claude-setup/memory/) during the session.
+# claude-setup/memory/) during the session, and - as a SECOND, SEPARATE commit -
+# anything written to the session bus (BUS_DIR, default
+# claude-setup/session-bus/).
 # It then attempts a DETACHED, time-bounded push, and never waits for it. The
 # session ends at the same speed whether the network is there or not.
+#
+# ⛔ Why the bus needs its own line here at all: it is MEMORY_DIR's SIBLING, not
+# its child. Staging the memory tree by path therefore never touched it, so a
+# session's closing summary to the other machines was committed nowhere and was
+# still untracked at the next pull - invisible to every other machine, with no
+# error and no warning. Worse, the "nothing to commit" fast path below keyed on
+# the memory tree alone, so a session whose only dirty file was its outbox
+# exited before staging anything at all.
+#
+# ⛔ And why they must be TWO commits, never one `add` of both paths: the
+# framework's own pre-commit guard refuses any commit that stages paths both
+# inside and outside MEMORY_DIR. A single mixed commit would be rejected by that
+# guard and the whole hook would silently do nothing - the failure it is here to
+# end.
 #
 # ⚠️ Why push here at all, when ai-memory-sync.sh pushes on the next
 # SessionStart: because "the next SessionStart" means the next one ON THIS
@@ -16,12 +32,12 @@
 # one - fire-and-forget, --no-verify-free, and silent about failure, because
 # anything it misses the next session still fixes.
 #
-# Scope is deliberately narrow: this stages ONE directory by path and nothing
-# else. An auto-commit is fine for a memory store and unacceptable for source,
-# and the memory repo may hold both.
+# Scope is deliberately narrow: this stages those two directories by path, one
+# per commit, and nothing else. An auto-commit is fine for a memory store and
+# unacceptable for source, and the memory repo may hold both.
 #
-# The commit runs with --no-verify, on purpose. This hook stages the memory
-# tree by path and commits only that pathspec, so a mixed-staging guard (the
+# The commit runs with --no-verify, on purpose. This hook stages one directory
+# by path and commits only that pathspec, so a mixed-staging guard (the
 # framework's pre-commit, which refuses a commit that mixes memory and source)
 # is satisfied by construction and there is nothing left for it to check. The
 # consequence is that repo-local hooks in the memory repo (pre-commit,
@@ -75,11 +91,28 @@ conf_get() {
 }
 
 MEM_DIR="$(conf_get MEMORY_DIR claude-setup/memory)"
-[ -d "$REPO/$MEM_DIR" ] || exit 0
+# BUS_DIR is the key the session-bus notice hook already reads, deliberately:
+# one name for one directory. A second key meaning the same thing is how two
+# readers of this file end up disagreeing and a guard goes quiet.
+BUS_DIR="$(conf_get BUS_DIR claude-setup/session-bus)"
+
+# Each directory stands on its own: either may be absent from a given repo, and
+# either may be clean. An empty variable below means "nothing to do for this
+# one" and every later step skips it in silence.
+[ -n "$MEM_DIR" ] && [ -d "$REPO/$MEM_DIR" ] || MEM_DIR=""
+[ -n "$BUS_DIR" ] && [ -d "$REPO/$BUS_DIR" ] || BUS_DIR=""
 
 # --- anything to commit? ---------------------------------------------------
-# Cheap: a clean tree exits here having touched no index and no network.
-if [ -z "$(git -C "$REPO" status --porcelain -- "$MEM_DIR" 2>/dev/null)" ]; then
+# Cheap: a clean tree exits here having touched no index and no network. Both
+# directories are asked, so a session whose only change is its outbox is no
+# longer dropped on the floor here.
+dirty_dir() {
+  [ -n "$1" ] || return 1
+  [ -n "$(git -C "$REPO" status --porcelain -- "$1" 2>/dev/null)" ]
+}
+dirty_dir "$MEM_DIR" || MEM_DIR=""
+dirty_dir "$BUS_DIR" || BUS_DIR=""
+if [ -z "$MEM_DIR" ] && [ -z "$BUS_DIR" ]; then
   exit 0
 fi
 
@@ -98,39 +131,61 @@ done
 # (An unborn branch is fine: symbolic-ref resolves before the first commit.)
 git -C "$REPO" symbolic-ref -q HEAD >/dev/null 2>&1 || exit 0
 
-# --- stage only the memory directory ---------------------------------------
-git -C "$REPO" add -- "$MEM_DIR" >/dev/null 2>&1 || exit 0
+# --- stage and commit ONE directory, alone ---------------------------------
+# commit_dir DIR SUBJECT_PREFIX. One pathspec per call and one pathspec per
+# commit: never `add` both directories together, or the mixed-staging guard
+# described at the top of this file rejects the commit and nothing lands.
+# Returns 0 only when a commit was actually created; every failure resets what
+# it staged and returns non-zero, so one half failing cannot strand the other.
+COMMITTED=0
+commit_dir() {
+  dir="$1"; prefix="$2"
+  [ -n "$dir" ] || return 1
 
-# `add` can still leave nothing staged (e.g. ignored files only).
-git -C "$REPO" diff --cached --quiet -- "$MEM_DIR" 2>/dev/null && exit 0
+  git -C "$REPO" add -- "$dir" >/dev/null 2>&1 || return 1
 
-# Name what changed so the log stays readable without opening the diff.
-# Basenames without .md, joined as 'a, b, c' and capped at 90 characters -
-# byte-for-byte what the .js twin produces. (Not `paste -sd', '`: paste
-# CYCLES its delimiter list, giving 'a,b c,d'. Not `xargs basename`: a name
-# with a space would be split in two.)
-#
-# core.quotePath=false because git's default is to octal-escape and double-quote
-# any path that is not pure ASCII, which would put `r\303\251sum\303\251.md"` in the
-# subject line - and the stray closing quote also defeats the `.md` strip.
-STAGED="$(git -C "$REPO" -c core.quotePath=false diff --cached --name-only -- "$MEM_DIR" 2>/dev/null)"
-FILES="$(printf '%s\n' "$STAGED" | sed -e 's#.*/##' -e 's/\.md$//' \
-         | awk 'length($0) { s = s (n++ ? ", " : "") $0 } END { print substr(s, 1, 90) }')"
-COUNT="$(printf '%s\n' "$STAGED" | grep -c . 2>/dev/null || echo 0)"
+  # `add` can still leave nothing staged (e.g. ignored files only).
+  git -C "$REPO" diff --cached --quiet -- "$dir" 2>/dev/null && return 1
 
-# A failed commit must not leave the memory tree staged. The usual causes are
-# environmental and outlast the session - no committer identity yet, a signing
-# key this non-interactive hook cannot unlock, a locked index - so the staging
-# would still be there on the user's next commit in that repo, where it is
-# either swept into an unrelated commit or refused outright by the framework's
-# own mixed-staging guard. Put the index back and stay silent: the files are on
-# disk and the next session commits them.
-if ! git -C "$REPO" commit --quiet --no-verify \
-     -m "memory: ${COUNT} file(s) from a session - ${FILES}" \
-     -- "$MEM_DIR" >/dev/null 2>&1; then
-  git -C "$REPO" reset --quiet -- "$MEM_DIR" >/dev/null 2>&1 || true
-  exit 0
-fi
+  # Name what changed so the log stays readable without opening the diff.
+  # Basenames without .md, joined as 'a, b, c' and capped at 90 characters -
+  # byte-for-byte what the .js twin produces. (Not `paste -sd', '`: paste
+  # CYCLES its delimiter list, giving 'a,b c,d'. Not `xargs basename`: a name
+  # with a space would be split in two.)
+  #
+  # core.quotePath=false because git's default is to octal-escape and double-quote
+  # any path that is not pure ASCII, which would put `r\303\251sum\303\251.md"` in the
+  # subject line - and the stray closing quote also defeats the `.md` strip.
+  staged="$(git -C "$REPO" -c core.quotePath=false diff --cached --name-only -- "$dir" 2>/dev/null)"
+  files="$(printf '%s\n' "$staged" | sed -e 's#.*/##' -e 's/\.md$//' \
+           | awk 'length($0) { s = s (n++ ? ", " : "") $0 } END { print substr(s, 1, 90) }')"
+  count="$(printf '%s\n' "$staged" | grep -c . 2>/dev/null || echo 0)"
+
+  # A failed commit must not leave the tree staged. The usual causes are
+  # environmental and outlast the session - no committer identity yet, a signing
+  # key this non-interactive hook cannot unlock, a locked index - so the staging
+  # would still be there on the user's next commit in that repo, where it is
+  # either swept into an unrelated commit or refused outright by the framework's
+  # own mixed-staging guard. Put the index back and stay silent: the files are on
+  # disk and the next session commits them.
+  if ! git -C "$REPO" commit --quiet --no-verify \
+       -m "${prefix} ${count} file(s) from a session - ${files}" \
+       -- "$dir" >/dev/null 2>&1; then
+    git -C "$REPO" reset --quiet -- "$dir" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  COMMITTED=1
+  return 0
+}
+
+# Memory first, then the bus - two commits, in that order, each skipped in
+# silence when its directory is absent or clean.
+commit_dir "$MEM_DIR" "memory:" || true
+commit_dir "$BUS_DIR" "✅TEAM:" || true
+
+# Nothing committed - nothing to push, and nothing left staged.
+[ "$COMMITTED" = 1 ] || exit 0
 
 # ── Opportunistic push ────────────────────────────────────────────────────
 #
