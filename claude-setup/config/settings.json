@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/supermode-hands.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/supermode-hands.mjs"
           }
         ]
       }
@@ -31,11 +31,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/context-mode-cache-heal.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/context-mode-cache-heal.mjs"
           },
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/session-bus-notice.js"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/session-bus-notice.js"
           }
         ]
       }
@@ -45,7 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/supermode-trigger.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/supermode-trigger.mjs"
           }
         ]
       },
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/supercode-trigger.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/supercode-trigger.mjs"
           }
         ]
       }
@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/context-guard.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/context-guard.mjs"
           }
         ]
       },
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/hooks/agent-watch.mjs"
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/agent-watch.mjs"
           }
         ]
       }

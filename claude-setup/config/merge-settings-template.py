@@ -33,12 +33,23 @@ _SCRIPT_RE = re.compile(
 )
 
 
+# A launcher is not the hook: `bash ~/.claude/hooks/run-node.sh <hook>.mjs` runs
+# <hook>.mjs, and run-node.sh is the interpreter finder in front of it.
+# ⛔ Counting it as a script would make EVERY node hook look like every other one
+# ("they both run run-node.sh"), so the first node hook registered under an event
+# would make every later one look already-registered - silently, which is the exact
+# delivery gap this merger exists to close.
+_LAUNCHERS = {"run-node.sh"}
+
+
 def scripts(cmd):
     """Basenames of the script files a hook command runs."""
     out = set()
     for m in _SCRIPT_RE.finditer(cmd or ""):
         path = next(g for g in m.groups() if g is not None)
-        out.add(os.path.basename(path.replace("\\", "/")))
+        base = os.path.basename(path.replace("\\", "/"))
+        if base not in _LAUNCHERS:
+            out.add(base)
     return out
 
 

@@ -39,11 +39,20 @@ if (!settingsPath || !tplPath || process.argv.length !== 4) {
 const SCRIPT_RE = /"([^"]*?\.(?:sh|mjs|js|py))"|'([^']*?\.(?:sh|mjs|js|py))'|([\w./~\\:-]+\.(?:sh|mjs|js|py))\b/g;
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
+// A launcher is not the hook: `bash ~/.claude/hooks/run-node.sh <hook>.mjs` runs
+// <hook>.mjs, and run-node.sh is the interpreter finder in front of it.
+// ⛔ Counting it as a script would make EVERY node hook look like every other one
+// ("they both run run-node.sh"), so the first node hook registered under an event
+// would make every later one look already-registered - silently, which is the exact
+// delivery gap this merger exists to close. Keep in step with the .py twin.
+const LAUNCHERS = new Set(["run-node.sh"]);
+
 const scripts = (cmd) => {
   const out = new Set();
   for (const m of String(cmd || "").matchAll(SCRIPT_RE)) {
     const p = m[1] ?? m[2] ?? m[3];
-    out.add(p.replace(/\\/g, "/").split("/").pop());
+    const base = p.replace(/\\/g, "/").split("/").pop();
+    if (!LAUNCHERS.has(base)) out.add(base);
   }
   return out;
 };
