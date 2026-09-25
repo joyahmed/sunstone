@@ -7,7 +7,8 @@
 # macOS  -> `say`, best installed voice (premium/enhanced ones appear after a download
 #           in System Settings > Accessibility > Spoken Content > Manage Voices).
 # WSL    -> powershell.exe running say.ps1 beside this file (Windows neural voice).
-# Linux  -> spd-say or espeak if installed; otherwise silent.
+# Linux  -> Piper (~/.local/share/piper, PIPER_VOICE) if installed, else spd-say or
+#           espeak; otherwise silent.
 # SAY_OFF=1 (or a file ~/.claude/hooks/say-off) silences it everywhere.
 set -u
 text="${1:-}"
@@ -31,6 +32,29 @@ if grep -qi microsoft /proc/version 2>/dev/null && command -v powershell.exe >/d
   [ -r "$ps1" ] || exit 0
   win="$(wslpath -w "$ps1" 2>/dev/null)" || exit 0
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win" -Text "$text" >/dev/null 2>&1 &
+  exit 0
+fi
+
+# Native Linux: Piper neural TTS when it is installed under ~/.local/share/piper
+# (binary at piper/piper, models in voices/). PIPER_VOICE names the model; default
+# en_US-amy-medium, else the first model present. Same layout chime.sh uses, so the
+# slice sentence and the chime speak in one voice.
+piper="$HOME/.local/share/piper/piper/piper"
+vdir="$HOME/.local/share/piper/voices"
+voice="$vdir/${PIPER_VOICE:-en_US-amy-medium}.onnx"
+if [ ! -r "$voice" ]; then
+  for f in "$vdir"/*.onnx; do [ -r "$f" ] && { voice="$f"; break; }; done
+fi
+if [ -x "$piper" ] && [ -r "$voice" ]; then
+  {
+    wav="${TMPDIR:-/tmp}/claude-say-$$.wav"
+    if printf '%s' "$text" | "$piper" -m "$voice" -f "$wav"; then
+      for p in pw-play paplay aplay; do
+        command -v "$p" >/dev/null 2>&1 && "$p" "$wav" && break
+      done
+    fi
+    rm -f "$wav"
+  } >/dev/null 2>&1 &
   exit 0
 fi
 
