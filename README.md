@@ -291,9 +291,20 @@ set it up; two `sunstone.conf` keys:
 
 **The protocol.** `BUS_DIR/outbox-<side>.md`, one writer per file: a machine writes **only its own**
 outbox, newest entry at the top under a `## <stamp> - <subject>` heading, then commits that file
-by path and pushes. (The memory repo's commit hook only commits `MEMORY_DIR`; a bus entry is a
-commit you or the session make on purpose, `git add <BUS_DIR>/outbox-<side>.md && git commit`.)
-The other side sees it at its next SessionStart, because `ai-memory-sync` pulled first.
+by path and pushes. The other side sees it at its next SessionStart, because `ai-memory-sync`
+pulled first.
+
+⚠️ **One writer per file means one MACHINE, not one session.** Several sessions commonly run on
+one box and they all share that box's outbox, so a session appends its entry at the top and
+pushes promptly rather than holding the file open. A session that assumes it is the only writer
+is how two of them race on the same file.
+
+**Committing a bus entry.** The SessionEnd hook stages `BUS_DIR` and commits it as its **own**
+commit, separate from the `MEMORY_DIR` one, so a closing summary lands without anyone staging it
+by hand. ⛔ The two must stay separate commits: a repo may guard against a commit that mixes the
+memory tree with anything outside it, and a single `add` of both paths would be refused, leaving
+the hook to do nothing at all. Committing an entry by hand still works and is the right move when
+it must reach another machine *now* rather than at session end.
 
 **The hook.** `session-bus-notice.js` runs at SessionStart, registered by the settings template
 after the sync hook on both platforms (Node, no dependencies). For every `outbox-*.md` in `BUS_DIR`
