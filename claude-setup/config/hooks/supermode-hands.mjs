@@ -1,60 +1,94 @@
 #!/usr/bin/env node
-// supermode-hands - the guard that keeps the orchestrator's hands off the work.
-// A PreToolUse hook on the editing tools. Pure Node.js, no shell dependency.
+// supermode-hands - the guard that notices when the orchestrator's hands are on
+// the work. A PreToolUse hook on the editing tools. Pure Node.js, no shell.
 //
 // Supermode's bargain is that the SESSION spends no context on the work: it reads
 // the queue, decides the slice, spawns an agent, gates, commits, hands off. The
 // failure mode is not dramatic - the session just starts doing the slice itself,
 // "because it is small", and twenty of those later the window is full and the mode
-// has quietly become an ordinary session with extra ceremony - and the user, who
-// left the chair precisely so this would not need watching, finds a full window
-// and a summary where a night of work should be. Words in a command file cannot
-// hold a line the model crosses one small edit at a time. A hook can.
+// has quietly become an ordinary session with extra ceremony.
 //
-// So: while supermode is on (~/.claude/ctx/<sid>.sm, or SUPERMODE=1), Edit, Write
-// and NotebookEdit are DENIED unless the path is orchestrator's business -
+// ⚠️ IT WARNS. IT DOES NOT DENY. The reasoning is worth keeping, because it is
+// what makes this file safe to leave running:
+//
+//   * The drift this guard was built against had a specific cause, and that cause
+//     has since been fixed elsewhere: the supermode contract used to be injected
+//     once and decay about twenty turns later. The trigger now re-injects it on
+//     EVERY prompt, so the model is reminded by the thing designed to remind it.
+//   * A deny can never be complete. Any interpreter can write a file; no text scan
+//     sees it without running the code. So the wall was always a fence with a gate
+//     in it, and hardening it would cost more than it bought.
+//   * The asymmetry decides it. A missed catch costs "the orchestrator did a little
+//     work itself". A false positive costs the mode DISABLING ITSELF in the middle
+//     of an unattended run - and the deny mechanism was wrong three separate ways
+//     in one night (arrows in commit messages, variables in paths, subagents read
+//     as the orchestrator). Cheap failure on one side, expensive on the other.
+//
+// So while supermode is on (~/.claude/ctx/<sid>.sm, or SUPERMODE=1), a write by the
+// ORCHESTRATOR to a path that is not the orchestrator's own business gets a warning
+// attached to the tool call - `systemMessage` for the user, `additionalContext`
+// for the model - and the call proceeds through the ordinary permission flow.
+// The orchestrator's own business is:
 //   * the handoff and the queue:  docs/ai-memory/**, session-<date>.md, WORK-QUEUE,
 //     HANDOFF, MEMORY.md, ABOUT-*.md, any *.md under a docs/ tree
-//   * the scratchpad and the gauge files themselves
-// - and the same rule is applied to the Bash commands that are really edits
-// (`sed -i`, `perl -pi`, `tee`, a `>` redirect). Bash is otherwise untouched: the
+//   * the scratchpad (including the one named in the hook payload) and the gauges
+// and the same rule is applied to the Bash commands that are really edits (`sed -i`,
+// `perl -pi`, `tee`, `dd of=`, a `>` redirect). Bash is otherwise untouched: the
 // gate, git and the launcher are the orchestrator's own job and must stay central.
 //
-// The deny is not a wall: the way past it is to SPAWN AN AGENT, which is the
-// thing the mode exists to make happen. `touch ~/.claude/ctx/<sid>.hands` (or
-// SUPERMODE_HANDS=1) takes the wheel back for the rest of the session when an
-// agent genuinely cannot be spawned - but it is the fallback, not the answer, and
-// it is not always available: a permission classifier in auto mode has refused
-// that very touch as a bypass flag. So the deny message leads with delegation and
-// mentions the marker second. The point of the marker is that taking the wheel
-// becomes a DECISION with a command behind it, instead of a drift nobody notices.
+// ⛔ A SUBAGENT IS NOT THE ORCHESTRATOR, and telling one otherwise is the bug this
+// guard existed to prevent, inverted. Agents inherit these hooks, and a subagent's
+// tool call arrives with the PARENT session's session_id AND the PARENT session's
+// transcript_path - so the old "is this the parent's transcript?" test passed for
+// every subagent and the guard warned the exact actor it exists to produce. The
+// harness ships the right field and says so in its own schema:
 //
-// Silent on every failure: a guard that crashes must not block the work.
+//     agent_id - "Present only when the hook fires from within a subagent ...
+//     Absent for the main thread, even in --agent sessions. Use this field (not
+//     agent_type) to distinguish subagent calls from main-thread calls."
 //
-// ⛔ HOW TO TELL WHETHER THIS GUARD IS ENFORCING - read the log, do not probe.
-// The guard falls open on FIVE separate conditions (supermode off, no transcript
-// in the payload, a transcript that is not the parent session's, the six-denial
-// breaker tripped, the `.hands` escape present), so running a deliberately-bad
-// command and watching it succeed proves NOTHING: an inert hook and a hook that
-// fell through look identical from the outside. That conflation shipped once in a
-// probe recipe and a peer caught it.
+// `agent_id` present => not the orchestrator => silent, logged as reason=subagent.
+// The transcript-shape test stays as a second, weaker guard for payloads that
+// predate the field. Verified live, 2026-09-25: a subagent editing a hook file was
+// told "you are the orchestrator, so this edit is not yours to make - delegate".
+// It WAS the delegate.
 //
-// So every invocation appends one line to ~/.claude/ctx/<sid>.handslog:
+// ⛔ AND THE WARNING NEVER HANDS OUT THE ESCAPE AS A PASTEABLE COMMAND. The old
+// deny message ended with `touch ~/.claude/ctx/<sid>.hands` spelled out in full -
+// and because of the misclassification above, the sid it printed was the PARENT's.
+// A subagent that followed the hook's own advice would have taken the wheel away
+// from the session that spawned it, for the rest of the run, silently. Taking the
+// wheel is the orchestrator's deliberate act, documented in the supermode command;
+// it is named here, not spelled out, and never to a caller identified as a subagent.
+//
+// Silent on every failure: a guard that crashes must not get in the way.
+//
+// ⛔ HOW TO TELL WHETHER THIS GUARD IS RUNNING - read the log, do not probe.
+// It stays silent on many conditions (supermode off, a subagent, no transcript in
+// the payload, a transcript that is not the parent session's, the `.hands` escape,
+// an allowlisted target, a target it cannot resolve), so watching a deliberately-bad
+// command succeed proves NOTHING - it succeeds either way now. Every invocation
+// appends one line to ~/.claude/ctx/<sid>.handslog:
 //     <iso> tool=Bash decision=allow reason=supermode-off target=-
-// No line for this session => the hook never ran (not installed, not wired to
-// this tool, or the snapshot predates it). A line with decision=allow => it ran
-// and fell through, and `reason=` names which of the five paths it took. The
-// command text is never logged - an argument can hold a secret - only the tool,
-// the decision, a stable reason token and the single offending path, which is
-// already in the deny message anyway.
+// No line for this session => the hook never ran (not installed, not wired to this
+// tool, or the snapshot predates it). `reason=` names which path it took, and
+// `decision=warn reason=warned` is a place the orchestrator drifted - which, with
+// nothing being blocked any more, is the whole visible product of this file. The
+// command text is never logged - an argument can hold a secret - only the tool, the
+// decision, a stable reason token and the single offending path.
 //
-// Gating: the log is written whenever the ctx directory already EXISTS, with no
-// env var to remember. That directory is created by the supermode launcher, so on
-// a machine that has never run supermode there is nothing to write to and the
-// logging costs one existsSync; on a machine that has, the log is the answer to
-// the question every session eventually asks. It self-rotates past ~512 KB so an
-// always-on append cannot grow without bound, and every part of it is wrapped so
-// a read-only home or a full disk cannot stop the guard returning its decision.
+// ⛔ THERE IS NO BREAKER ANY MORE. There used to be one: six denials in a session
+// and the guard disengaged itself, on the theory that a tool nobody can leave
+// running unattended is worse than a leaky one. That theory was right about a DENY
+// and is exactly backwards for a warning - a warning blocks nothing, so there is
+// nothing to break, and a counter that silently switches the warning off is the
+// self-disabling failure this whole change is meant to remove. If a counter is ever
+// added back, it must never turn the warning off.
+//
+// Gating: the log is written whenever the ctx directory already EXISTS, with no env
+// var to remember. That directory is created by the supermode launcher. It
+// self-rotates past ~512 KB, and every part of it is wrapped so a read-only home or
+// a full disk cannot stop the guard returning.
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -70,9 +104,9 @@ function cfgDir() {
 const sid = typeof input.session_id === "string" ? input.session_id.replace(/[^A-Za-z0-9_-]/g, "") : "";
 const ctx = resolve(cfgDir(), "ctx");
 
-// One line per invocation, so "inert" and "fell open" are distinguishable. See
-// the header. Every step is inside the try: logging is a courtesy, the decision
-// is the contract.
+// One line per invocation, so "inert" and "fell through" are distinguishable. See
+// the header. Every step is inside the try: logging is a courtesy, the decision is
+// the contract.
 const LOG_MAX = 512 * 1024;
 const note = (decision, reason, target) => {
   try {
@@ -83,42 +117,26 @@ const note = (decision, reason, target) => {
       ` decision=${decision} reason=${reason} target=${target ? String(target).replace(/\s+/g, "_") : "-"}\n`);
   } catch { /* a read-only home must not break the guard */ }
 };
-const fallOpen = (reason, target) => { note("allow", reason, target); process.exit(0); };
+const quiet = (reason, target) => { note("allow", reason, target); process.exit(0); };
 
 const on = process.env.SUPERMODE === "1" || (sid && existsSync(resolve(ctx, `${sid}.sm`)));
-if (!on) fallOpen("supermode-off");
-// The wheel, taken back deliberately.
-if (process.env.SUPERMODE_HANDS === "1" || (sid && existsSync(resolve(ctx, `${sid}.hands`)))) fallOpen("hands-escape");
+if (!on) quiet("supermode-off");
+// The wheel, taken back deliberately by the orchestrator.
+if (process.env.SUPERMODE_HANDS === "1" || (sid && existsSync(resolve(ctx, `${sid}.hands`)))) quiet("hands-escape");
 
-// ⛔ The agents inherit these hooks. A subagent's tool calls arrive here with the
-// SAME session_id as the orchestrator's, so a guard that only asked "is supermode
-// on?" would deny the very edits it exists to cause - the mode would forbid all
-// work by anyone and wedge on its first slice.
-//
-// So the orchestrator is identified POSITIVELY, never by "not a subagent": its
-// transcript is the session's own file, <...>/<session-id>.jsonl, while a
-// subagent's is <...>/<session-id>/subagents/agent-<id>.jsonl. Anything else -
-// no transcript in the payload, a path shaped some other way, a layout this
-// hook has not seen - is left alone. This guard fails OPEN by construction: a
-// missed deny costs one edit in the wrong window, a wrong deny costs the run.
+// The one authoritative "this is not the orchestrator" signal - see the header.
+const isSubagent = typeof input.agent_id === "string" && input.agent_id !== "";
+if (isSubagent) quiet("subagent");
+
+// Second, weaker test, for a payload with no agent_id at all: the orchestrator's
+// transcript is the session's own file, <...>/<session-id>.jsonl. Anything shaped
+// otherwise is a layout this hook has not seen, and it is left alone. Note this
+// test canNOT see a subagent on a current harness - a subagent is handed the
+// PARENT's transcript_path - which is why agent_id is checked first and this is a
+// backstop, not the mechanism.
 const transcript = String(input.transcript_path || "").replace(/\\/g, "/");
 const parentTranscript = sid && transcript.endsWith(`/${sid}.jsonl`) && !transcript.includes("/subagents/");
-if (!parentTranscript) fallOpen("not-parent-transcript");
-
-// The breaker. The identification above rests on a transcript layout that is the
-// harness's to change, and hooks are snapshotted at session start, so a mistaken
-// guard cannot be fixed from inside the session it is breaking. If it denies six
-// times in one session, something is wrong with the guard and not with the work:
-// it disengages itself, leaves the `.hands` marker so the rest of the session is
-// consistent, and says so once. A tool that cannot be wrong is a tool nobody can
-// leave running unattended.
-const denyLog = resolve(ctx, `${sid}.handsdeny`);
-let denies = 0;
-try { denies = parseInt(readFileSync(denyLog, "utf8").trim(), 10) || 0; } catch { denies = 0; }
-if (denies >= 6) {
-  try { writeFileSync(resolve(ctx, `${sid}.hands`), "disengaged: six denials in one session\n"); } catch { /* */ }
-  fallOpen("breaker-tripped");
-}
+if (!parentTranscript) quiet("not-parent-transcript");
 
 const tool = String(input.tool_name || "");
 const args = input.tool_input || {};
@@ -134,58 +152,88 @@ const ALLOW = [
   /^\/tmp\//i,
   /\.claude\/ctx\//i,
 ];
-const allowed = (p) => !p || ALLOW.some((re) => re.test(String(p).replace(/\\/g, "/")));
+// The harness names this session's scratchpad in the payload; it is the
+// orchestrator's own by definition, whatever it is called on this machine.
+const scratch = typeof input.scratchpad_dir === "string" ? input.scratchpad_dir.replace(/\\/g, "/") : "";
+const allowed = (p) => {
+  if (!p) return true;
+  const s = String(p).replace(/\\/g, "/");
+  if (scratch && (s === scratch || s.startsWith(scratch.replace(/\/$/, "") + "/"))) return true;
+  return ALLOW.some((re) => re.test(s));
+};
 
-let path = null;
+// ⛔ VARIABLES IN A WRITE TARGET. `echo x > "$D/out.sh"` used to be reported as a
+// write to the literal string `$D/out.sh` - or, when the target was quoted, to the
+// empty string, and the message read `the slice that touches ""`. Both were denies
+// on paths the guard could not even name, and the second one cost a real
+// verification step: an agent could not build a throwaway copy of a script.
+//
+// The rule now: RESOLVE what can honestly be resolved - this process's environment
+// and any NAME=value assignment in the same command line - and judge the result.
+// What cannot be resolved is not guessed at: no target, no warning, and a reason
+// token in the log so the fall-through is visible rather than invisible. An empty
+// result is likewise not a source file. Command substitution is never resolved,
+// because resolving it means RUNNING it, and a guard does not run the command it
+// is inspecting.
+const localVars = Object.create(null);
+const VAR = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+const expand = (t) => {
+  if (!/[$`]/.test(t)) return { ok: true, v: t };
+  if (/\$\(|`/.test(t)) return { ok: false, why: "unresolvable-target" };   // never execute it
+  let missing = false;
+  const v = t.replace(VAR, (_m, braced, bare) => {
+    const n = braced || bare;
+    if (n in localVars) return localVars[n];
+    if (typeof process.env[n] === "string") return process.env[n];
+    missing = true;                                   // $UNSET expands to "" in the
+    return "";                                        // shell, but this hook cannot
+  });                                                 // know the shell's env - so
+  if (missing || /[$`]/.test(v)) return { ok: false, why: "unresolvable-target" };
+  return { ok: true, v };
+};
+
+let path = null;      // the offending target, once there is one
+let how = "";         // where it came from, so the warning can say why
+
 if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
   path = args.file_path || args.notebook_path || "";
-  if (allowed(path)) fallOpen("allowlisted", path);
+  how = `the ${tool} tool's target file`;
+  if (allowed(path)) quiet("allowlisted", path);
 } else if (tool === "Bash") {
   const cmd = String(args.command || "");
   // Only the forms that WRITE a file. A redirect into /dev/null, into the
   // scratchpad or into an allowlisted note is not an edit of the work.
   //
-  // ⛔ SCAN THE SHELL SYNTAX, NOT THE TEXT. The first version matched `>` and
-  // `tee` anywhere in the string, which denied the orchestrator's own work:
+  // ⛔ SCAN THE SHELL SYNTAX, NOT THE TEXT. The first version matched `>` and `tee`
+  // anywhere in the string, which flagged the orchestrator's own work:
   //     git commit -m "slice 2 -> gate passed"    the arrow is PROSE
   //     git log --format="%h => %s"               so is this one
-  //     pnpm build | tee <scratchpad>/build.log   an allowed target
-  // Commits are the one thing the contract promises stay the orchestrator's, so
-  // a guard that denies them is worse than no guard - and each false deny burns
-  // one of the six the breaker allows. Found by a peer session reading the
-  // pushed file, 2026-09-25.
-  //
-  // A redirect operator cannot appear inside quotes and a heredoc body is data,
-  // so both are removed before looking for operators. `forOps` - quotes emptied,
-  // contents gone - is what makes `git commit -m "a -> b"` work, so the redirect
-  // scan must keep using it.
+  // Commits are the one thing the contract promises stay the orchestrator's. A
+  // heredoc body is data and a redirect operator cannot appear inside quotes, so
+  // heredocs are stripped and the rest is LEXED quote-aware - never regex-scanned
+  // over a quote-stripped copy, which is how `> "docs/ai-memory/note.md"` came out
+  // as the empty string.
   const stripHeredocs = (t) =>
     t.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?(?:\n[ \t]*\2[ \t]*(?:\n|$)|$)/g, " ");
   const base = stripHeredocs(cmd);
-  const forOps = base.replace(/'[^']*'/g, " '' ").replace(/"(?:[^"\\]|\\.)*"/g, ' "" ');
 
-  const targets = [];
-  let m;
-  const redirect = /(?<![0-9<>])>>?\s*([^\s;|&)]+)/g;
-  while ((m = redirect.exec(forOps))) targets.push(m[1]);
-
-  // ⛔ THE WRITER'S ARGUMENTS MUST BE TOKENIZED QUOTE-AWARE, not read off a
-  // quote-stripped copy of the line. The first version peeled the quotes and
-  // then split on whitespace, so a sed script with a SPACE in it fell apart into
-  // words and every word after the first was taken for a filename:
+  // ⛔ THE WRITER'S ARGUMENTS MUST BE TOKENIZED QUOTE-AWARE. An earlier version
+  // peeled the quotes and split on whitespace, so a sed script with a SPACE in it
+  // fell apart into words and every word after the first was taken for a filename:
   //     sed -i 's/^- GATE: `bash -n` OK\./.../' claude-setup/memory/<note>.md
-  // was denied with the target named as `GATE:` - a false deny on a path that is
-  // squarely allowlisted. Reported live from another machine, 2026-09-25.
-  //
-  // So a quoted argument is ONE token, and its value is the quote-STRIPPED
-  // contents, which is what keeps `tee "src/out.ts"` a deny. The lexer returns
-  // null on an unbalanced quote: ambiguous tokenizing means no targets, which
-  // means ALLOW. Fail open, always - see the ceiling note below.
+  // was reported against `GATE:`. So a quoted argument is ONE token and its value
+  // is the quote-STRIPPED contents, which is what keeps `tee "src/out.ts"` caught.
+  // The lexer returns null on an unbalanced quote: ambiguous tokenizing means no
+  // targets, which means silence. Fail quiet, always.
   const SEP = Symbol("sep");
   const lex = (s) => {
     const out = [];
-    let cur = null;
-    const push = () => { if (cur) out.push(cur); cur = null; };
+    const redirects = [];
+    let cur = null, wantsFile = false;
+    const push = () => {
+      if (cur) { if (wantsFile) { redirects.push(cur); wantsFile = false; } out.push(cur); }
+      cur = null;
+    };
     const add = (txt, quoted) => { cur = cur || { v: "", q: false }; cur.v += txt; if (quoted) cur.q = true; };
     for (let i = 0; i < s.length; i++) {
       const c = s[i];
@@ -201,27 +249,53 @@ if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
         add(v, true); i = j; continue;
       }
       if (c === "\\") { if (i + 1 < s.length) add(s[++i], true); continue; }
+      // A `#` that starts a word starts a COMMENT, and a comment is prose. Found
+      // 2026-09-25 by a probe script whose own comment line - `# <hook> <cmd>` -
+      // was read as a redirect into a file called `<cmd>`, and refused.
+      if (c === "#" && !cur) { while (i + 1 < s.length && s[i + 1] !== "\n") i++; continue; }
       if (/\s/.test(c) && c !== "\n") { push(); continue; }
       if (c === "\n" || c === ";" || c === "|" || c === "&" || c === "(" || c === ")" || c === "`") {
-        push(); out.push(SEP); continue;                 // a new simple command starts here
+        push(); wantsFile = false; out.push(SEP); continue;   // a new simple command starts here
       }
       if (c === "<" || c === ">") {
-        // A redirect ends the argument list as far as THIS scan cares: its target
-        // is the redirect scanner's job above, and stopping early can only yield
-        // FEWER targets, which is the fail-open direction.
+        const writes = c === ">";
         if (cur && !cur.q && /^[0-9]+$/.test(cur.v)) cur = null;   // the fd of `2>`
         push(); out.push(SEP);
-        while (i + 1 < s.length && (s[i + 1] === ">" || s[i + 1] === "&")) i++;
+        let j = i;
+        if (s[j + 1] === ">") j++;                       // `>>`
+        let dup = false;
+        if (s[j + 1] === "&") {                          // `2>&1` duplicates an fd,
+          dup = true; j++;                               // it does not open a file
+          while (j + 1 < s.length && /[0-9-]/.test(s[j + 1])) j++;
+        }
+        i = j;
+        if (writes && !dup) wantsFile = true;            // the NEXT token is the file
         continue;
       }
       add(c, false);
     }
     push();
-    return out;
+    return { out, redirects };
   };
 
-  // `tee`, `sed -i`, `perl -pi`, `dd of=` write the files they are GIVEN - so
-  // read the files they are given, rather than denying the command for existing.
+  const lexed = lex(base);
+  if (!lexed) quiet("unlexable");
+  const { out: toks, redirects } = lexed;
+
+  // `D=/tmp/x; ... > $D/f` is one command line, so its own assignments are the
+  // first place to look a variable up.
+  for (const t of toks) {
+    if (t === SEP) continue;
+    const a = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(t.v);
+    if (!a) continue;
+    const e = expand(a[2]);
+    if (e.ok) localVars[a[1]] = e.v;
+  }
+
+  const raw = redirects.map((t) => ({ v: t.v, how: "a `>` redirect" }));
+
+  // `tee`, `sed -i`, `perl -pi`, `dd of=` write the files they are GIVEN - so read
+  // the files they are given, rather than flagging the command for existing.
   const writerTargets = (rest, kind) => {
     const out = [];
     let skipNext = false, scriptSeen = kind !== "sed";  // sed's first bare arg is its script
@@ -236,8 +310,7 @@ if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
 
   // Commands that only carry another command; the writer may be behind one.
   const WRAP = /^(sudo|doas|env|command|time|nohup|stdbuf|xargs|nice|ionice)$/;
-  const toks = lex(base);
-  for (const seg of (toks || []).reduce((acc, t) => {
+  for (const seg of toks.reduce((acc, t) => {
     if (t === SEP) { if (acc[acc.length - 1].length) acc.push([]); } else acc[acc.length - 1].push(t);
     return acc;
   }, [[]])) {
@@ -262,51 +335,65 @@ if (tool === "Edit" || tool === "Write" || tool === "NotebookEdit") {
     else if (name === "dd") kind = "dd";
     if (!kind) continue;
     if (kind === "dd") {                                 // the target rides on a flag
-      for (const t of rest) { const d = /^of=(.+)$/.exec(t.v); if (d) targets.push(d[1]); }
+      for (const t of rest) { const d = /^of=([\s\S]+)$/.exec(t.v); if (d) raw.push({ v: d[1], how: "the `of=` argument to `dd`" }); }
       continue;
     }
-    targets.push(...writerTargets(rest, kind));
+    const label = kind === "sed" ? "an argument to `sed -i`" : kind === "perl" ? "an argument to `perl -pi`" : "an argument to `tee`";
+    for (const v of writerTargets(rest, kind)) raw.push({ v, how: label });
   }
 
-  // ⛔ THE CEILING, stated so nobody mistakes this for a boundary: an
-  // interpreter can always write a file, and no text scan can see it without
-  // running the code - `python3 -c 'open("src/x.ts","w")'` goes through, and so
-  // does a redirect written INSIDE an awk or perl program, because stripping
-  // quotes is exactly what makes `git commit -m "a -> b"` work. Those are false
-  // ALLOWS on a guard that already fails open by design: the mode leaks a
-  // little, nothing breaks. A false DENY is the expensive direction - it blocks
-  // real work and burns one of the six the breaker allows. This is a nudge
-  // against absent-minded editing with a one-command escape hatch, not a
-  // sandbox, and hardening it into one would cost the thing that makes it safe.
-  const bad = targets.filter((t) => t !== "/dev/null" && !/^\/dev\//.test(t) && !allowed(t));
-  // nothing written, or everything written is the orchestrator's own
-  if (!bad.length) fallOpen(targets.length ? "allowlisted" : "no-write-target",
-    targets.find((t) => !/^\/dev\//.test(t)) || targets[0]);
-  path = bad[0];
+  // ⛔ THE CEILING, stated so nobody mistakes this for a boundary: an interpreter
+  // can always write a file, and no text scan can see it without running the code -
+  // `python3 -c 'open("src/x.ts","w")'` goes through, and so does a redirect written
+  // INSIDE an awk or perl program, because a quoted string is data. Those are misses
+  // on a guard that is now only a warning, so a miss costs a warning nobody got.
+  // This is a nudge against absent-minded editing, not a sandbox.
+  const bad = [];
+  let sawTarget = false, unresolved = null;
+  for (const t of raw) {
+    const e = expand(t.v);
+    if (!e.ok) { unresolved = unresolved || { why: e.why, v: t.v }; continue; }   // logged, never warned
+    const v = e.v.trim();
+    if (!v) { unresolved = unresolved || { why: "empty-target", v: t.v }; continue; }
+    if (v === "/dev/null" || /^\/dev\//.test(v)) { sawTarget = true; continue; }
+    sawTarget = true;
+    if (!allowed(v)) bad.push({ ...t, v });
+  }
+  if (!bad.length) {
+    if (unresolved) quiet(unresolved.why, unresolved.v);
+    quiet(sawTarget ? "allowlisted" : "no-write-target", raw.length ? raw[0].v : null);
+  }
+  path = bad[0].v;
+  how = bad[0].how;
 } else {
-  fallOpen("not-an-edit-tool");
+  quiet("not-an-edit-tool");
 }
 
-const reason =
-  `supermode: you are the orchestrator, so this edit is not yours to make. ` +
-  `Spawn an Agent (Agent tool) for the slice that touches ${path} and let it do the editing - ` +
-  `its context is spent instead of this session's, which is the whole reason the mode exists. ` +
-  `Give the agent the verified facts you already hold (exact paths, the gate command, what "done" is) ` +
-  `so it does not rediscover them, and keep its slice small enough to finish under 60% of its window ` +
-  `(\`node ~/.claude/hooks/agent-watch.mjs --report\` shows where each one stands). ` +
-  `The handoff note, the queue row, the gate and the commit stay yours. ` +
-  `Delegating is the way out of this deny - not an alternative to it. ` +
-  `If an agent truly cannot do it and your permission layer allows the command, ` +
-  `\`touch ${resolve(ctx, `${sid || "<session-id>"}.hands`)}\` takes the wheel for the rest of the session; ` +
-  `say in one line why, then repeat the edit. Some setups refuse that touch - then delegate.`;
+// ⛔ SPECIFIC, OR IT IS NOISE. Name the file, name where the write was seen, and
+// name why that path is not the orchestrator's - a generic "you should be
+// orchestrating" is the kind of warning people learn to scroll past.
+const warning =
+  `supermode drift check (a warning - nothing is blocked, the tool call proceeds). ` +
+  `This session is the orchestrator, and ${how} is \`${path}\`, which is not one of the ` +
+  `paths the orchestrator owns (the handoff note and docs/ai-memory/**, the work queue, ` +
+  `MEMORY.md and ABOUT-*.md, claude-setup/memory/**, the scratchpad and ~/.claude/ctx). ` +
+  `That makes it slice work, and slice work belongs to an Agent: its context is spent ` +
+  `instead of this session's, which is the whole reason the mode exists. ` +
+  `If you have not already delegated this, spawn an Agent (Agent tool) for the slice that ` +
+  `touches \`${path}\`, hand it the verified facts you already hold (exact paths, the gate ` +
+  `command, what "done" is) so it does not rediscover them, and keep its slice small enough ` +
+  `to finish under 60% of its window (\`node ~/.claude/hooks/agent-watch.mjs --report\` ` +
+  `shows where each one stands). The handoff note, the queue row, the gate and the commit ` +
+  `stay yours. If you are deliberately taking the wheel for the rest of the session, the ` +
+  `\`.hands\` marker described in the supermode command silences this - say in one line why, ` +
+  `and do it as a decision rather than by drifting into it.`;
 
-note("deny", "denied", path);
-try { writeFileSync(denyLog, String(denies + 1) + "\n"); } catch { /* the breaker is a courtesy */ }
+note("warn", "warned", path);
 
 process.stdout.write(JSON.stringify({
+  systemMessage: `supermode: the orchestrator is writing \`${path}\` itself (warning only - this is slice work an Agent should own).`,
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: reason,
+    additionalContext: warning,
   },
 }) + "\n");

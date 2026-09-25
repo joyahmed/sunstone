@@ -20,16 +20,39 @@
 // (`/supercode ...` - the command loads itself), when stdin is not JSON, and on
 // every failure - a prompt is never blocked.
 //
-// Contract: Claude Code pipes {"prompt": "..."} on stdin; plain stdout on
-// exit 0 is appended to the model's context for that turn.
+// Contract: Claude Code pipes {"prompt": "...", "session_id": "..."} on stdin;
+// plain stdout on exit 0 is appended to the model's context for that turn.
+//
+// One piece of STATE, and only one: when the word fires, ~/.claude/ctx/<id>.sc is
+// written, mirroring supermode-trigger.mjs's `.sm` idiom exactly (same session-id
+// sanitising, same CLAUDE_CONFIG_DIR-aware root, same one-JSON-line payload).
+// It is NOT "supercode is on forever" - supercode is an ACT, not a mode: one
+// prompt fans out and it is over. The file only records that THIS session issued
+// a supercode prompt, and the status line treats it as meaningful only while
+// agent-watch.mjs still reports live agents, so a stale marker paints nothing and
+// there is deliberately no cleanup scheme. Writing it can never fail the hook.
 
 import fs from "node:fs";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
 
-let prompt = "";
-try {
-  prompt = String(JSON.parse(fs.readFileSync(0, "utf8")).prompt ?? "");
-} catch {
-  process.exit(0);
+let input = {};
+try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { process.exit(0); }
+const prompt = String(input.prompt ?? "");
+const sid = typeof input.session_id === "string" ? input.session_id.replace(/[^A-Za-z0-9_-]/g, "") : "";
+
+function cfgDir() {
+  const e = process.env.CLAUDE_CONFIG_DIR;
+  if (e && e.trim() !== "") return e.startsWith("~") ? resolve(homedir(), e.replace(/^~[/\\]?/, "")) : resolve(e);
+  return resolve(homedir(), ".claude");
+}
+const flag = sid ? resolve(cfgDir(), "ctx", `${sid}.sc`) : null;
+function markFanOut(by) {
+  if (!flag) return;
+  try {
+    fs.mkdirSync(resolve(cfgDir(), "ctx"), { recursive: true });
+    fs.writeFileSync(flag, JSON.stringify({ since: new Date().toISOString(), by }) + "\n");
+  } catch { /* the fan-out still runs; only the status line loses its marker */ }
 }
 
 
@@ -66,8 +89,15 @@ function typedOnly(p) {
 
 const typed = typedOnly(prompt);
 
-if (/^\s*\/supercode\b/i.test(typed)) process.exit(0);
+if (/^\s*\/supercode\b/i.test(typed)) {
+  // The command loads its own procedure - do not restate it, just record that a
+  // fan-out was requested so the status line has something real to read.
+  markFanOut("command");
+  process.exit(0);
+}
 if (!/\bsupercode\b/i.test(typed)) process.exit(0);
+
+markFanOut("word");
 
 const m = /\bsupercode\b[\s:,-]*(min|max)?\b/i.exec(prompt);
 const wide = m && m[1] && m[1].toLowerCase() === "max";
