@@ -35,8 +35,11 @@ HOOK="${HOOK:-$HERE/../agent-watch.mjs}"
 # (run-node.sh exists for exactly this, and has its own battery beside this one.)
 NODE="${NODE:-node}"
 if ! "$NODE" --version >/dev/null 2>&1; then
+	# ⚠️ ${HOME:-} below, not $HOME: `set -u` plus an unset HOME aborts this battery
+	# with exit 1, which reads as A FAILING TEST instead of "could not run". A hook
+	# environment really is that bare - `env -i` reproduces it exactly.
 	for cand in "${NVM_BIN:-}/node" /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node \
-	            "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node; do
+	            "${NVM_DIR:-${HOME:-}/.nvm}"/versions/node/*/bin/node; do
 		[ -x "$cand" ] && { NODE="$cand"; break; }
 	done
 fi

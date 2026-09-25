@@ -44,8 +44,11 @@ HOOK="${HOOK:-$HERE/../supermode-hands.mjs}"
 NODE="${NODE:-node}"
 if ! "$NODE" --version >/dev/null 2>&1; then
 	# Not on PATH and not a function here: look where node actually installs.
+	# ⚠️ ${HOME:-} below, not $HOME: `set -u` plus an unset HOME aborts this battery
+	# with exit 1, which reads as A FAILING TEST instead of "could not run". A hook
+	# environment really is that bare - `env -i` reproduces it exactly.
 	for cand in "${NVM_BIN:-}/node" /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node \
-	            "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node; do
+	            "${NVM_DIR:-${HOME:-}/.nvm}"/versions/node/*/bin/node; do
 		[ -x "$cand" ] && { NODE="$cand"; break; }
 	done
 fi
@@ -53,8 +56,8 @@ fi
 [ -f "$HOOK" ] || { echo "hook not found beside the test: $HOOK"; exit 2; }
 
 SID=hookselftest
-CTX="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/ctx"
-TRANSCRIPT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-selftest/$SID.jsonl"
+CTX="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/ctx"
+TRANSCRIPT="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/projects/-selftest/$SID.jsonl"
 pass=0; fail=0
 
 run() { # <command> [agent_id] -> prints allow|warn|deny|other
