@@ -92,6 +92,20 @@ t allow "heredoc body containing a redirect"  'git commit -F - <<MSG
 echo hi > src/evil.ts
 MSG'
 
+# ⛔ THE FALSE DENY THAT COST A RUN, 2026-09-25. `writerTargets` read its
+# arguments off a QUOTE-STRIPPED copy of the command, then split on whitespace -
+# so a sed script containing spaces became a dozen words and the SECOND word,
+# `GATE:`, was reported as the file being written. The real target was a note
+# under claude-setup/memory/, squarely allowlisted. Reported live from another
+# machine. The pair below is the whole point: the script must never become a
+# target, and the real file must still be checked.
+SEDX='s/^- GATE: `bash -n` OK\./- CONFIRMED BY EAR: yes\n- GATE: `bash -n` OK./'
+echo "a writer script with spaces in it - the script is not a target:"
+t allow "sed -i, spacey script, memory note"  "sed -i '$SEDX' claude-setup/memory/sunstone/session-2026-09-25.md"
+t deny  "sed -i, spacey script, source file"  "sed -i '$SEDX' src/app.ts"
+t allow "sed -i onto a quoted allowed path"   "sed -i 's/a/b/' \"docs/ai-memory/note.md\""
+t allow "perl -e expression with a colon"     "perl -pi -e 's/x: y/z/' docs/ai-memory/note.md"
+
 echo "writes in odd shapes - must DENY:"
 t deny  "command substitution hiding a write" 'echo $(echo hi > src/app.ts)'
 t deny  "dd with the target on a flag"        'dd if=/dev/zero of=src/app.ts'
@@ -107,7 +121,27 @@ echo "the ceiling of a text scan - ALLOW is the accepted answer here:"
 t allow "redirect inside an awk program"      'awk "{print > \"src/out.ts\"}" in.txt'
 t allow "an interpreter writing a file"       'python3 -c "open(\"src/x.ts\",\"w\").write(1)"'
 
-rm -f "$CTX/$SID.handsdeny" "$CTX/$SID.hands"
+# The invocation log is how any machine answers "is this guard even running?" -
+# an inert hook and a hook that fell open look identical from the outside, so the
+# log is the only witness. Assert it exists and carries both decisions with a
+# reason token, or the probe advice in the hook's header is a lie.
+echo "the invocation log - one line per call, allow and deny alike:"
+LOG="$CTX/$SID.handslog"
+lt() { # <label> <grep -E pattern>
+  if [ -f "$LOG" ] && grep -Eq "$2" "$LOG"; then pass=$((pass+1)); printf '  ok   log   %s\n' "$1"
+  else fail=$((fail+1)); printf '  FAIL log   %s\n' "$1"; fi
+}
+nt() { # <label> <pattern that must NOT appear>
+  if [ -f "$LOG" ] && grep -q "$2" "$LOG"; then fail=$((fail+1)); printf '  FAIL log   %s\n' "$1"
+  else pass=$((pass+1)); printf '  ok   log   %s\n' "$1"; fi
+}
+lt "a fall-through is logged with a reason" 'decision=allow reason=(no-write-target|allowlisted) '
+lt "a deny is logged with its target"       'decision=deny reason=denied target=src/app\.ts'
+# A command line can hold a secret in an argument. Tool, decision, reason and the
+# one offending path are enough, and the path is already in the deny message.
+nt "the command text never reaches the log" 's/a/b/'
+
+rm -f "$CTX/$SID.handsdeny" "$CTX/$SID.hands" "$LOG"
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
