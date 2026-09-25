@@ -68,6 +68,15 @@ if (!CLI && !supermodeOn(sid)) process.exit(0);
 
 // --- where the agents write ------------------------------------------------
 // The session transcript is <dir>/<sid>.jsonl and the agents live in <dir>/<sid>/subagents.
+// CLI-only: set when subagentsDir() had to resolve a session rather than being
+// given one, so the report can say whose agents it printed instead of just
+// printing them.
+let inferredSid = null;
+// CLI-only: set instead of guessing when more than one session on the box has
+// delegated agents - a bare --report has no way to know which one the reader
+// means, and guessing is how a report about session A gets printed while
+// session B is the one on screen.
+let ambiguousSids = null;
 function subagentsDir() {
   const t = input.transcript_path;
   if (typeof t === "string" && t.endsWith(".jsonl")) {
@@ -76,6 +85,25 @@ function subagentsDir() {
   }
   // No transcript path (CLI, or an older harness): find it under the projects tree.
   const projects = resolve(cfgDir(), "projects");
+  if (CLI && !sid) {
+    // No session id given on the CLI: collect every candidate instead of
+    // picking the most recently written one by mtime.
+    const found = [];
+    try {
+      for (const slug of readdirSync(projects)) {
+        let entries = [];
+        try { entries = readdirSync(join(projects, slug)); } catch { continue; }
+        for (const e of entries) {
+          const d = join(projects, slug, e, "subagents");
+          try { found.push({ sid: e, dir: d, mtime: statSync(d).mtimeMs }); } catch { /* not a session dir */ }
+        }
+      }
+    } catch { /* no projects tree */ }
+    if (found.length === 0) return null;
+    if (found.length > 1) { ambiguousSids = found.map((f) => f.sid); return null; }
+    inferredSid = found[0].sid;
+    return found[0].dir;
+  }
   let best = null;
   try {
     for (const slug of readdirSync(projects)) {
@@ -190,9 +218,15 @@ const fmt = (a) =>
   `${a.used === null ? "" : (a.used / 1000).toFixed(0) + "k"}${a.window ? "/" + (a.window >= 1e6 ? a.window / 1e6 + "M" : a.window / 1000 + "k") : ""}  ` +
   `${a.type}  ${a.what || a.id}`;
 if (CLI) {
+  if (ambiguousSids) {
+    console.log(`agent-watch: ${ambiguousSids.length} sessions on this box have delegated agents - no session id given, so refusing to guess which one. Pass one: node ~/.claude/hooks/agent-watch.mjs --report <session-id>`);
+    for (const s of ambiguousSids) console.log("  " + s);
+    process.exit(0);
+  }
   if (!dir) { console.log("agent-watch: no subagents directory for this session - nothing has been delegated yet."); process.exit(0); }
   if (!list.length) { console.log(`agent-watch: ${dir} is empty - nothing has been delegated yet.`); process.exit(0); }
-  console.log(`agent-watch: ${live.length} live / ${list.length} total  (${dir})`);
+  const resolved = inferredSid ? `  [session ${inferredSid}, inferred - the only one on this box with delegated agents]` : "";
+  console.log(`agent-watch: ${live.length} live / ${list.length} total  (${dir})${resolved}`);
   for (const a of list.slice(0, 20)) console.log("  " + fmt(a));
   process.exit(0);
 }
