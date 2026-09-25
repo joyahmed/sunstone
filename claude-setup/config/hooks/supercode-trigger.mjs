@@ -31,6 +31,8 @@
 // a supercode prompt, and the status line treats it as meaningful only while
 // agent-watch.mjs still reports live agents, so a stale marker paints nothing and
 // there is deliberately no cleanup scheme. Writing it can never fail the hook.
+// The line carries the WIDTH as well - {"since":...,"by":...,"width":"min"|"max"} -
+// so the status line can paint a different mark for each; see markFanOut below.
 
 import fs from "node:fs";
 import { resolve } from "node:path";
@@ -47,11 +49,17 @@ function cfgDir() {
   return resolve(homedir(), ".claude");
 }
 const flag = sid ? resolve(cfgDir(), "ctx", `${sid}.sc`) : null;
-function markFanOut(by) {
+// The WIDTH goes in the flag too, not just the fact of a fan-out: the status line
+// paints a different mark for `max` than for min/plain and has no other way to know
+// which width was asked for: the requirement is that supercode has a mark and that
+// min and max each have their own. "min" is written for plain as well - the command
+// calls those the same width. A flag written before this field existed has no
+// `width` at all, and every reader must read that as min, the command's own default.
+function markFanOut(by, width) {
   if (!flag) return;
   try {
     fs.mkdirSync(resolve(cfgDir(), "ctx"), { recursive: true });
-    fs.writeFileSync(flag, JSON.stringify({ since: new Date().toISOString(), by }) + "\n");
+    fs.writeFileSync(flag, JSON.stringify({ since: new Date().toISOString(), by, width }) + "\n");
   } catch { /* the fan-out still runs; only the status line loses its marker */ }
 }
 
@@ -167,21 +175,27 @@ function typedOnly(p) {
 
 const typed = typedOnly(prompt);
 
-if (/^\s*\/supercode\b/i.test(typed)) {
-  // The command loads its own procedure - do not restate it, just record that a
-  // fan-out was requested so the status line has something real to read.
-  markFanOut("command");
-  process.exit(0);
-}
-if (!/\bsupercode\b/i.test(typed)) process.exit(0);
-
-markFanOut("word");
-
+// The width is parsed ABOVE both branches because both of them record it now. The
+// slash form carries a width too (`/supercode max ...`) and used to exit before
+// this parse ever ran, so the status line could not tell a wide command-invoked
+// fan-out from a narrow one: it saw a flag with no width either way.
 // `typed`, not `prompt`: the gate already ignores relayed text, but this width
 // parse used to read the RAW prompt, so a hand-back that said "supercode max"
 // could WIDEN a fan-out the user started narrowly in the same turn.
 const m = /\bsupercode\b[\s:,-]*(min|max)?\b/i.exec(typed);
 const wide = m && m[1] && m[1].toLowerCase() === "max";
+const widthFlag = wide ? "max" : "min";
+
+if (/^\s*\/supercode\b/i.test(typed)) {
+  // The command loads its own procedure - do not restate it, just record that a
+  // fan-out was requested, and how wide, so the status line has something real
+  // to read.
+  markFanOut("command", widthFlag);
+  process.exit(0);
+}
+if (!/\bsupercode\b/i.test(typed)) process.exit(0);
+
+markFanOut("word", widthFlag);
 
 const width = wide
   ? "WIDTH = max: the user is in a hurry - every agent the work splits into, " +
