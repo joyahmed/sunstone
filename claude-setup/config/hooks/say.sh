@@ -27,6 +27,21 @@ if [ "$(uname -s)" = "Darwin" ]; then
   exit 0
 fi
 
+# Native Windows (Git Bash / MSYS / Cygwin): this is NOT WSL - /proc/version exists but
+# carries no "microsoft", so the WSL branch below is skipped and the Linux fallback finds
+# no TTS and exits 0. That made the sentence silently vanish on a native Windows box while
+# every call still reported success. Speak through say.ps1 beside this file; the path needs
+# cygpath, not wslpath, which does not exist here.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    ps1="$HOME/.claude/hooks/say.ps1"
+    [ -r "$ps1" ] || exit 0
+    win="$(cygpath -w "$ps1" 2>/dev/null)" || exit 0
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win" -Text "$text" >/dev/null 2>&1 &
+    exit 0
+    ;;
+esac
+
 if grep -qi microsoft /proc/version 2>/dev/null && command -v powershell.exe >/dev/null 2>&1; then
   ps1="$HOME/.claude/hooks/say.ps1"
   [ -r "$ps1" ] || exit 0
