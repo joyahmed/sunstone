@@ -175,6 +175,70 @@ if [ "$GUARDED" = "1" ]; then
 	fi
 fi
 
+# --- the repo's own verification gate ----------------------------------------
+# A repo that ships claude-setup/scripts/verify.sh has written down what "not
+# broken" means for itself. Run it here, on the way out. WHY HERE: that script
+# existed for days wired into no automatic trigger at all, and a gate nobody
+# triggers is indistinguishable from no gate - it is only ever run by the person
+# who already suspects something is wrong.
+#
+# NO-OP FOR EVERY OTHER REPO: one file test. A repo that does not ship that path
+# never notices this hook grew, and nothing below can fire for it.
+#
+# ⚠️ It checks the WORKING TREE, not the commits being pushed. At push time those
+# are the same thing in every ordinary case; checking the pushed objects would
+# mean a scratch checkout on every push. Said out loud rather than implied.
+#
+# ⛔ THE EXIT-CODE CONTRACT IS DELIBERATELY ASYMMETRIC:
+#      0        verified          -> push
+#      1        the gate says RED -> BLOCK. The only blocking case there is.
+#      anything the gate could NOT RUN (no sh, crashed, killed, timed out)
+#      else     -> say so in one loud line and LET THE PUSH THROUGH.
+# A gate that blocks for a reason that is not its own gets deleted inside a day,
+# and takes the force-push protection above with it when it goes.
+VERIFY_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || VERIFY_ROOT=""
+[ -z "$VERIFY_ROOT" ] && VERIFY_ROOT="$PWD"
+VERIFY="$VERIFY_ROOT/claude-setup/scripts/verify.sh"
+
+if [ -f "$VERIFY" ]; then
+	# A delete-only push sends no new content, so there is nothing to verify.
+	SENDING=0
+	while read -r V_LOCAL_REF V_LOCAL_SHA V_REMOTE_REF V_REMOTE_SHA; do
+		[ -z "$V_LOCAL_REF" ] && continue
+		printf '%s' "$V_LOCAL_SHA" | grep -qE '^0*$' || SENDING=1
+	done < "$STDIN_COPY"
+
+	if [ "$SENDING" = "1" ]; then
+		if [ -n "${SKIP_VERIFY:-}" ]; then
+			printf '⚠️  pre-push: SKIP_VERIFY set - claude-setup/scripts/verify.sh NOT run on %s, nothing was verified\n' "$REPO" >&2
+		else
+			printf '   pre-push: running claude-setup/scripts/verify.sh (SKIP_VERIFY=1 bypasses it)\n' >&2
+			# ⚠️ stdin is /dev/null, NOT the push refs: $STDIN_COPY still has to be
+			# readable in full by the repo-local hook this chains to below.
+			# ⚠️ stdout is redirected to stderr: a pre-push hook's stdout is the
+			# person's terminal either way, and keeping it off fd 1 means a caller
+			# capturing the push output never mistakes gate chatter for git's.
+			# A timeout only if the machine has one - a hung gate must not become a
+			# hung push, but a missing `timeout` must not become a missing gate.
+			if command -v timeout >/dev/null 2>&1; then
+				timeout 300 sh "$VERIFY" </dev/null 1>&2
+			else
+				sh "$VERIFY" </dev/null 1>&2
+			fi
+			VRC=$?
+			case "$VRC" in
+				0) ;;
+				1) printf '\n⛔ pre-push: verify.sh is RED on %s - push refused.\n' "$REPO" >&2
+				   printf '   Fix what it printed above. If this genuinely has to go out now:\n' >&2
+				   printf '   SKIP_VERIFY=1 git push ...\n\n' >&2
+				   exit 1 ;;
+				*) printf '⚠️  pre-push: verify.sh exited %s - the gate DID NOT RUN, nothing was verified.\n' "$VRC" >&2
+				   printf '   Push allowed: a gate never blocks for a reason that is not its own.\n' >&2 ;;
+			esac
+		fi
+	fi
+fi
+
 # ⛔ core.hooksPath makes git IGNORE $GIT_DIR/hooks entirely, so a repo that
 # installs its own hook there would be silently disabled. Chain to it instead.
 # Resolve with --git-dir, never `--git-path hooks` - that OBEYS core.hooksPath
