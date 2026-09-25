@@ -34,6 +34,12 @@ typed in any prompt, writes it). The status line shows **`sm`** while it is on, 
 `2a·63%` next to it when two agents are live and the fullest is at 63% of its window.
 `stop supermode` ends it.
 
+⛔ Before delegating any slice that launches `claude` inside a captured pty (testing
+launcher behaviour, terminal titling, shell integration), make sure nothing is
+uncommitted under `MEMORY_DIR` or `BUS_DIR` in the memory repo first - the SessionEnd
+hook fires on that nested process's exit too, and will commit and push whatever it
+finds there under a message nobody wrote.
+
 ## The loop
 
 Work the queue **one slice at a time**. A slice is one change small enough to land on its

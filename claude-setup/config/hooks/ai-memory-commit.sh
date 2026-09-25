@@ -47,6 +47,22 @@
 #
 # Every failure mode is silent. A memory file that fails to commit is still on
 # disk and will be picked up next time.
+#
+# ⛔ Because this hook both commits AND pushes, it is the thing that actually
+# publishes on someone's behalf - not the next SessionStart, this one, right
+# now, unattended. Any nested or forked `claude` process fires SessionEnd when
+# IT exits too, so launching `claude` inside a captured pty - a common way to
+# test launcher behaviour, terminal titling, or shell integration - runs this
+# hook on that exit, and it will commit and push whatever is uncommitted under
+# MEMORY_DIR or BUS_DIR, under a message its author never wrote. This has
+# already happened: a half-finished edit was committed under a generated
+# message and pushed before its author could write their own - and once
+# pushed to a public remote it could not be quietly rewritten. BUS_DIR is the
+# likelier of the two to catch someone out, because it is what gets written at
+# the very end of a session, so it is the file most often sitting
+# half-drafted at exactly the moment someone is testing. The rule: before any
+# pty test that may run `claude`, have nothing uncommitted under MEMORY_DIR or
+# BUS_DIR.
 
 set -u
 
