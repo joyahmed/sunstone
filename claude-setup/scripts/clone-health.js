@@ -512,16 +512,30 @@ function hookReport(memoryRepo, conf) {
   }
 
   // The one dependency we can resolve without running anything: palimpsest's
-  // wrapper looks for build/cli/recall.js under PALIMPSEST_REPO, then two
-  // fallbacks, and exits 0 when none of them exists.
+  // wrapper looks for build/cli/recall.js under the PALIMPSEST_REPO hints, then
+  // under every <root>/*/palimpsest, then the private install, and exits 0 when
+  // none of them exists. PALIMPSEST_REPO is a space-separated LIST, not one
+  // absolute path: sunstone.conf is git-synced to every machine and the checkout
+  // sits under a different group dir on each, so the glob for the leaf name is
+  // what makes this report right on all of them. Mirror of palimpsest-recall.sh.
   let palimpsest = null;
   if (rows.some((r) => r.script && r.script.includes('palimpsest-recall'))) {
-    const configured = conf.PALIMPSEST_REPO ? expandHome(conf.PALIMPSEST_REPO) : '';
+    const list = (v) => String(v || '').trim().split(/\s+/).filter(Boolean).map(expandHome);
+    const roots = [...list(conf.PROJECT_ROOTS), path.join(HOME, 'projects'), path.join(HOME, 'Projects')];
+    const discovered = [];
+    for (const r of roots) {
+      let kids = [];
+      try {
+        kids = fs.readdirSync(r, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+      } catch { /* root absent on this machine */ }
+      for (const d of [r, ...kids.map((n) => path.join(r, n))]) discovered.push(path.join(d, 'palimpsest'));
+    }
     const candidates = [...new Set(
-      [configured, path.join(HOME, 'projects/06_Dev/palimpsest'), path.join(HOME, '.palimpsest/lib')]
+      [...list(conf.PALIMPSEST_REPO), ...discovered, path.join(HOME, '.palimpsest/lib')]
         .filter(Boolean)
         .map((c) => path.resolve(c)))]
-      .map((c) => ({ dir: c, entry: path.join(c, 'build/cli/recall.js'), found: isFile(path.join(c, 'build/cli/recall.js')) }));
+      .map((c) => ({ dir: c, entry: path.join(c, 'build/cli/recall.js'), found: isFile(path.join(c, 'build/cli/recall.js')) }))
+      .filter((c) => c.found || isDir(c.dir));
     const db = path.join(HOME, '.palimpsest/memory.db');
     palimpsest = { candidates, live: candidates.some((c) => c.found), db, dbPresent: isFile(db) };
   }
