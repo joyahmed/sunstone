@@ -9,6 +9,9 @@
 #   · a guard whose machine-local list is missing protects nothing, while
 #     everyone believes it is on;
 #   · a status line that cannot find an interpreter prints nothing at all;
+#   · a top-level config file COPIED into ~/.claude once and never re-copied -
+#     a status line 5 KB behind its repo copy painted every session for weeks,
+#     while the SAME file on the sibling userland was a symlink and correct;
 #   · a shell that resolves `node` only from an INTERACTIVE rc has no node in
 #     any hook, cron job, git hook or task runner - on a machine where node
 #     plainly exists.
@@ -29,7 +32,7 @@ for a in "$@"; do
   case "$a" in
     --fix) FIX=1 ;;
     --quiet|-q) QUIET=1 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
   esac
 done
 
@@ -46,6 +49,20 @@ if [ -r "$CFG/ai-memory-path" ]; then
   MEM=$(head -n1 "$CFG/ai-memory-path" | tr -d '\r' | xargs 2>/dev/null)
 fi
 [ -n "$MEM" ] && [ -d "$MEM/.git" ] || { [ -d "$HOME/.ai-memory/.git" ] && MEM="$HOME/.ai-memory"; }
+# MEMORY_REPO overrides that resolution, for the one case it cannot serve: this
+# run is pointed at the OTHER userland's HOME on a two-userland machine, so the
+# path file there holds that side's spelling of the repo and this filesystem
+# cannot open it. Same shape as MEMORY_REPO_HOOKS / MEMORY_REPO_MIGRATIONS above.
+[ -n "${MEMORY_REPO:-}" ] && [ -d "$MEMORY_REPO" ] && MEM="$MEMORY_REPO"
+# ⛔ UNRESOLVABLE IS NOT ABSENT. Reporting it as absent would be the THIRD
+# cross-filesystem false positive in this file - the interpreter check (PATH
+# belongs to the shell running this, not to the HOME being inspected) and the
+# core.hooksPath check (a drive-letter path is unopenable from the other side)
+# are the two that already exist and are deliberately left alone. A personal
+# root this process cannot open makes everything only that root ships
+# UNVERIFIABLE: say so once, and judge nothing on it.
+MEM_UNRESOLVED=""
+if [ -n "$MEM" ] && [ ! -d "$MEM" ]; then MEM_UNRESOLVED="$MEM"; MEM=""; fi
 MEMORY_REPO_HOOKS="${MEMORY_REPO_HOOKS:-${MEM:+$MEM/claude-setup/config/hooks}}"
 MEMORY_REPO_MIGRATIONS="${MEMORY_REPO_MIGRATIONS:-${MEM:+$MEM/claude-setup/migrations}}"
 
@@ -56,6 +73,11 @@ warn() { printf '  ⚠ %s\n' "$1"; warnings=$((warnings+1)); }
 bad()  { printf '  ⛔ %s\n' "$1"; problems=$((problems+1)); }
 
 [ "$QUIET" = "1" ] || echo "install-doctor: $CFG"
+
+# --- 0. can this run see the personal root at all? ----------------------------
+if [ -n "$MEM_UNRESOLVED" ]; then
+  warn "personal root: CANNOT VERIFY - $CFG/ai-memory-path names \"$MEM_UNRESOLVED\", which this process cannot open. That is unopenable, NOT missing: a path written by the other userland of a two-userland machine reads exactly like this from here. Nothing only that root ships is checked below, and a file it OVERRIDES is judged against the framework's own copy instead - which can read as DIVERGED. Re-run with MEMORY_REPO=<that repo as THIS filesystem spells it> to check them."
+fi
 
 # --- 1. every hook the framework ships is installed ---------------------------
 # The failure this catches: a release ADDS a hook, every machine pulls it, and
@@ -285,7 +307,7 @@ if [ -n "$migs" ] && [ -d "$migs" ]; then
   [ -z "$pending" ] && ok "migrations: all applied" || warn "migrations pending:$pending"
 fi
 
-# --- 8. an installed command or skill that the repo has since MOVED PAST ------
+# --- 8. an installed command, skill or config file the repo has MOVED PAST ----
 # ⛔ THE FAILURE THIS EXISTS FOR, and it is the same class as check 1 wearing a
 # different hat. Hooks can be symlinked (LINK_HOOKS), so a fix pushed to the repo
 # reaches every machine on `git pull`. Commands and skills are COPIED by setup -
@@ -295,6 +317,12 @@ fi
 # since the missing sections landed; one of the missing sections was the rule that
 # keeps an unattended run from failing its own commit on every slice. A skill hit
 # the same wall the same week. Every symptom was a person noticing, days later.
+#
+# The same hat a THIRD time: the files setup installs DIRECTLY into ~/.claude - a
+# status line, the CLAUDE.md overlay, the supermode settings - are copies too,
+# and this check walked only commands/ and skills/ until one of them was found
+# 5 KB behind by hand. Where that list comes from, and what it deliberately
+# leaves out, is documented at tl_pairs() below beside the loop that walks it.
 #
 # ⚠️ STALE AND DIVERGED ARE DIFFERENT ANSWERS AND ONLY ONE IS SAFE TO FIX.
 #   stale    - every line of the installed file also appears in the repo copy,
@@ -410,8 +438,96 @@ for root in "$REPO" "${MEM:-}"; do
   done
 done
 
+# top-level config files: the ones setup installs DIRECTLY into $CFG rather than
+# into commands/ or skills/ - the gap this check had until a stale one was found
+# by hand. A status line 5 KB behind the repo copy had painted every session for
+# weeks; the same file on the sibling userland was a symlink and correct, so
+# nothing on either side could see it. This list is setup.sh's, step by step:
+#   step_statusline     claude-setup/config/statusline-command.sh → $CFG/
+#   setup.ps1 (Windows) claude-setup/config/statusline-command.js → $CFG/
+#   step_supermode      claude-setup/config/supermode.settings.json → $CFG/
+#   step_claude_global  claude-setup/config/CLAUDE.global.md → $CFG/CLAUDE.md,
+#                       falling back to agents/CLAUDE.md when NO root ships one
+#                       (step_agents, guarded there by CLAUDE_GLOBAL_ANY).
+#
+# ⛔ EXCLUDED, each for its own reason, so an absence here is a decision rather
+# than an oversight:
+#   settings.json - MERGED into the live file by the template merger, never
+#                   copied over it. A live settings.json is a SUPERSET of the
+#                   shipped one BY DESIGN, so "strict subset of the repo copy"
+#                   would describe a correct install as a broken one and the
+#                   inverse as fine. Checks 1b and 2 cover it properly, by
+#                   comparing what it NAMES rather than its lines.
+#   hooks/        - a subdirectory, and already covered three ways: check 1 for
+#                   presence, check 1b for registration, check 6 for the mode.
+#   ~/CLAUDE.md,
+#   ~/AGENTS.md   - installed at the HOME root, not into $CFG. Same failure
+#                   class, still unchecked; named here so it stays a known gap
+#                   instead of an assumed pass.
+#
+# tl_pairs - <repo-relative source>|<name under $CFG>, one per line.
+tl_pairs() {
+  printf '%s\n' 'claude-setup/config/statusline-command.sh|statusline-command.sh' \
+                'claude-setup/config/statusline-command.js|statusline-command.js' \
+                'claude-setup/config/supermode.settings.json|supermode.settings.json'
+  # One destination, two possible sources, and setup.sh's own precedence: a
+  # CLAUDE.global.md shipped by ANY root takes $CFG/CLAUDE.md, else agents/CLAUDE.md.
+  if [ -n "$(src_for claude-setup/config/CLAUDE.global.md)" ]; then
+    printf '%s\n' 'claude-setup/config/CLAUDE.global.md|CLAUDE.md'
+  else
+    printf '%s\n' 'agents/CLAUDE.md|CLAUDE.md'
+  fi
+}
+tl_src() {  # <name under $CFG> -> absolute source path, or empty
+  for _q in $(tl_pairs); do
+    [ "${_q#*|}" = "$1" ] && { src_for "${_q%%|*}"; return; }
+  done
+}
+# line_text <file> - false for anything holding a NUL byte, i.e. not
+# line-oriented text. ⚠️ subset_of COMPARES LINES, and a line comparison says
+# nothing whatsoever about a binary or generated blob: calling one "stale" on
+# that evidence would be a confident wrong answer, which is the shape this
+# script exists to remove. None of the four names above is binary today; this is
+# what keeps a future one from being guessed at instead of reported as unknown.
+line_text() {
+  [ -f "$1" ] || return 1
+  LC_ALL=C tr -d '\000' < "$1" | cmp -s - "$1"
+}
+for pairv in $(tl_pairs); do
+  rel=${pairv%%|*}; name=${pairv#*|}
+  real=$(src_for "$rel"); [ -n "$real" ] || continue
+  tracked=$((tracked+1))
+  st=$(file_state "$CFG/$name" "$real")
+  case "$st" in
+    stale|diverged)
+      if ! line_text "$CFG/$name" || ! line_text "$real"; then
+        warn "config/$name differs from the repo copy and is NOT line-oriented text - the subset test that separates stale from diverged means nothing for such a file, so this is CANNOT VERIFY rather than a guess"
+        continue
+      fi ;;
+  esac
+  case "$st" in
+    stale)    stale_list="$stale_list config/$name" ;;
+    diverged) diverged_list="$diverged_list config/$name" ;;
+    absent)
+      # ⛔ The two statusline twins are SEPARATE files under a parity contract,
+      # never substitutes for each other - and they are installed by different
+      # installers: setup.sh ships the .sh on POSIX, setup.ps1 the .js on
+      # Windows. A machine that has one therefore LEGITIMATELY lacks the other,
+      # and "shipped but never installed" about the twin this OS does not
+      # install would be a false positive of exactly the kind already costing
+      # this script two lines of apology. Each installed twin is still judged on
+      # its OWN content against its OWN source, above; only the absent-report is
+      # suppressed, and only while the other twin is actually there.
+      case "$name" in
+        statusline-command.sh) [ -e "$CFG/statusline-command.js" ] && continue ;;
+        statusline-command.js) [ -e "$CFG/statusline-command.sh" ] && continue ;;
+      esac
+      absent_list="$absent_list config/$name" ;;
+  esac
+done
+
 if [ "$tracked" = "0" ]; then
-  warn "commands/skills: nothing shipped to compare - this check did NOT run"
+  warn "commands/skills/config: nothing shipped to compare - this check did NOT run"
 else
   if [ -n "$stale_list" ]; then
     if [ "$FIX" = "1" ]; then
@@ -420,6 +536,17 @@ else
         if [ "$kind" = "commands" ]; then
           real=$(src_for "claude-setup/commands/$name")
           mkdir -p "$CFG/commands" && cp "$real" "$CFG/commands/$name" && echo "  → refreshed commands/$name"
+        elif [ "$kind" = "config" ]; then
+          real=$(tl_src "$name")
+          # ⚠️ A symlink is REMOVED rather than written through. One pointing at
+          # the source is never in this list (that is `link`), but one pointing
+          # anywhere else would have this cp overwrite THAT file instead of this
+          # destination - install_copy in setup.sh removes it for the same reason.
+          [ -L "$CFG/$name" ] && rm -f "$CFG/$name"
+          # cp keeps an existing destination's mode, so a refreshed status line
+          # stays executable; chmod covers the case where it was not.
+          mkdir -p "$CFG" && cp "$real" "$CFG/$name" \
+            && { [ -x "$real" ] && chmod +x "$CFG/$name"; echo "  → refreshed config/$name"; }
         else
           real=$(src_for "skills/$name")
           # Safe to replace whole: "stale" proved this tree holds no file the
@@ -427,14 +554,14 @@ else
           rm -rf "${CFG:?}/skills/$name" && cp -r "$real" "$CFG/skills/$name" && echo "  → refreshed skills/$name"
         fi
       done
-      ok "commands/skills: refreshed what was only out of date"
+      ok "commands/skills/config: refreshed what was only out of date"
     else
-      warn "STALE - installed but never refreshed since the repo moved on:$stale_list   (this script with --fix refreshes them; LINK_COMMANDS=1 / LINK_SKILLS=1 in sunstone.conf stops it happening again)"
+      warn "STALE - installed but never refreshed since the repo moved on:$stale_list   (this script with --fix refreshes them; LINK_COMMANDS=1 / LINK_SKILLS=1 / LINK_CLAUDE_MD=1 / LINK_HOOKS=1 in sunstone.conf stop it happening again, each for its own kind)"
     fi
   fi
   [ -n "$diverged_list" ] && warn "DIVERGED - edited here, so NOT touched and not refreshable:$diverged_list   (diff each against the repo; keep the local change or delete the file and re-run setup)"
-  [ -n "$absent_list" ] && warn "commands/skills shipped but never installed:$absent_list   (re-run setup)"
-  [ -z "$stale_list$diverged_list$absent_list" ] && ok "commands/skills: all $tracked match the repo (or are symlinks to it)"
+  [ -n "$absent_list" ] && warn "commands/skills/config shipped but never installed:$absent_list   (re-run setup)"
+  [ -z "$stale_list$diverged_list$absent_list" ] && ok "commands/skills/config: all $tracked match the repo (or are symlinks to it)"
 fi
 
 # The two sibling skill stores setup also writes. They belong to tools that are

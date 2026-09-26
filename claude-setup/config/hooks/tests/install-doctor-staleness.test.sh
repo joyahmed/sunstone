@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Regression battery for install-doctor.sh check 8 - the staleness detector for
-# installed commands and skills.
+# installed commands, skills AND the top-level files setup installs straight
+# into ~/.claude (the status line twins, the CLAUDE.md overlay, the supermode
+# settings).
 #
 # WHY THIS FILE EXISTS. The drift it detects is invisible by construction: setup
 # COPIES commands and skills, nothing re-copies them, and until check 8 nothing
@@ -21,6 +23,17 @@
 #
 # The third thing it must never do is destroy a local edit, so case 2 and case 6
 # byte-compare a diverged file and a diverged skill tree before and after --fix.
+#
+# ⛔ AND THE SHAPE THAT WAS ACTUALLY MISSED gets its own fixture, because the
+# first version of the check walked commands/ and skills/ ONLY: a top-level
+# config file installed as a PLAIN COPY where the sibling machine has a symlink,
+# 5 KB behind the repo, painting every session for weeks. `statusline-command.js`
+# below is that file, reproduced exactly - a stale strict-subset copy, not a link.
+# Its twin `.sh` is the inverse control in the same scenario: a symlink, and the
+# detector must stay silent about it. The two twins are SEPARATE files under a
+# parity contract, so nothing here compares one against the other; what IS
+# pinned is that the twin an OS's installer does not ship is not called
+# "never installed" while the other twin is present.
 #
 #   bash install-doctor-staleness.test.sh      (DOCTOR=/path/to/install-doctor.sh)
 #
@@ -64,7 +77,7 @@ build() {
 	FHOME=$(mktemp -d "$TMPROOT/home.XXXXXX") || return 1
 	REPO="$FHOME/repo"; CFG="$FHOME/.claude"
 	mkdir -p "$REPO/claude-setup/scripts" "$REPO/claude-setup/commands" "$REPO/skills" \
-	         "$CFG/commands" "$CFG/skills"
+	         "$REPO/claude-setup/config" "$REPO/agents" "$CFG/commands" "$CFG/skills"
 	cp "$DOCTOR" "$REPO/claude-setup/scripts/install-doctor.sh"
 
 	# ── the four command fixtures, one per state the detector must distinguish ──
@@ -99,6 +112,26 @@ build() {
 	# what a refresh would destroy - the tree must be left alone entirely.
 	printf 'name: y\nbody one\nbody two\n' > "$CFG/skills/diverged-skill/SKILL.md"
 	printf 'a script I wrote myself\n' > "$CFG/skills/diverged-skill/mine.sh"
+
+	# ── the top-level config fixtures, one per state, at $CFG's own level ──────
+	# The four names are setup.sh's: the two statusline twins, supermode.settings.json
+	# and CLAUDE.md (from CLAUDE.global.md, or agents/CLAUDE.md when no root ships one).
+	printf '#!/bin/sh\nread -r line\necho one\necho the segment that landed later\n' > "$REPO/claude-setup/config/statusline-command.sh"
+	printf 'const a = 1\nconst b = 2\nconsole.log(a)\n// the segment that landed later\n'  > "$REPO/claude-setup/config/statusline-command.js"
+	printf '{\n  "permissions": {},\n  "env": {}\n}\n'                                    > "$REPO/claude-setup/config/supermode.settings.json"
+	printf '# rules\none\ntwo\nthe rule that landed later\n'                              > "$REPO/claude-setup/config/CLAUDE.global.md"
+	chmod +x "$REPO/claude-setup/config/statusline-command.sh" "$REPO/claude-setup/config/statusline-command.js"
+
+	# ⛔ THE LIVE SHAPE THAT WAS MISSED: a stale strict-subset PLAIN COPY, sitting
+	# where the sibling userland has a symlink. Executable, as the installer left it.
+	printf 'const a = 1\nconst b = 2\nconsole.log(a)\n' > "$CFG/statusline-command.js"
+	chmod +x "$CFG/statusline-command.js"
+	# INVERSE CONTROL: its twin, installed as a symlink into the repo. Must not be named.
+	ln -s "$REPO/claude-setup/config/statusline-command.sh" "$CFG/statusline-command.sh"
+	# INVERSE CONTROL: byte-identical copy of the overlay. Must not be named.
+	cp "$REPO/claude-setup/config/CLAUDE.global.md" "$CFG/CLAUDE.md"
+	# DIVERGED: a line of its own, so --fix must not touch it.
+	printf '{\n  "permissions": {},\n  "myOwnKey": true\n}\n' > "$CFG/supermode.settings.json"
 }
 
 # Run the doctor against the fixture and print only check 8's lines, so an
@@ -106,7 +139,7 @@ build() {
 run() {
 	HOME="$FHOME" CLAUDE_CONFIG_DIR="$CFG" \
 		bash "$REPO/claude-setup/scripts/install-doctor.sh" "$@" 2>&1 \
-		| grep -E 'STALE|DIVERGED|commands/skills|never installed|refreshed' || true
+		| grep -E 'STALE|DIVERGED|commands/skills|never installed|refreshed|CANNOT VERIFY|match the repo' || true
 }
 
 # ── 1+3+4+5: what a report names, and what it must not ───────────────────────
@@ -126,6 +159,11 @@ hasnt "a symlink into the repo is NOT flagged"                "commands/linked.m
 # The stale ones must be offered a fix, and the diverged ones must not be.
 has   "it names the switch that repairs the stale ones"       "--fix"                    "$out"
 has   "it says the diverged ones are not refreshable"         "not refreshable"          "$out"
+# ── the top-level files, i.e. the gap: a status line 5 KB behind the repo ─────
+has   "⛔ the STALE top-level config COPY is named"            "config/statusline-command.js"   "$out"
+has   "the DIVERGED top-level config file is named"           "config/supermode.settings.json" "$out"
+hasnt "⛔ inverse control: a SYMLINKED top-level file is NOT flagged"  "config/statusline-command.sh" "$out"
+hasnt "⛔ inverse control: an IDENTICAL top-level file is NOT flagged" "config/CLAUDE.md"             "$out"
 
 # ── a fixture with nothing wrong must read clean, or the check is noise ──────
 echo
@@ -137,11 +175,82 @@ cp "$REPO/claude-setup/commands/absent.md"      "$CFG/commands/absent.md"
 cp "$REPO/skills/stale-skill/SKILL.md"          "$CFG/skills/stale-skill/SKILL.md"
 cp "$REPO/skills/diverged-skill/SKILL.md"       "$CFG/skills/diverged-skill/SKILL.md"
 rm -f "$CFG/skills/diverged-skill/mine.sh"
+# and the top-level files: the stale copy refreshed, the diverged one reverted.
+# (statusline-command.sh stays a symlink and CLAUDE.md is already identical, so
+# this fixture covers link / same / current-copy at once.)
+cp "$REPO/claude-setup/config/statusline-command.js"   "$CFG/statusline-command.js"
+cp "$REPO/claude-setup/config/supermode.settings.json" "$CFG/supermode.settings.json"
 out=$(run)
 hasnt "nothing is called stale"                               "STALE"                    "$out"
 hasnt "nothing is called diverged"                            "DIVERGED"                 "$out"
 hasnt "nothing is called uninstalled"                         "never installed"          "$out"
 has   "it says so positively, rather than staying silent"     "match the repo"            "$out"
+hasnt "nothing is called unverifiable either"                 "CANNOT VERIFY"             "$out"
+
+# ── shipped-but-never-installed, and the twin that is NOT a fault ────────────
+# ⛔ The false positive to avoid: setup.sh installs the .sh on POSIX and setup.ps1
+# the .js on Windows, so a machine that has one legitimately lacks the other.
+echo
+echo "a top-level config file nothing ever installed, and the twin that is not a fault:"
+build || exit 2
+rm -f "$CFG/supermode.settings.json"
+rm -f "$CFG/statusline-command.sh"
+out=$(run)
+has   "the uninstalled top-level config file is named"        "config/supermode.settings.json" "$out"
+has   "...in its own words, not as staleness"                 "never installed"                "$out"
+hasnt "⛔ the statusline twin this OS does not install is NOT called uninstalled" "config/statusline-command.sh" "$out"
+# ...but with NEITHER twin installed there is no status line at all, and that IS
+# a finding: the suppression must be conditional, not a permanent blind spot.
+rm -f "$CFG/statusline-command.js"
+out=$(run)
+has   "with NEITHER twin installed the status line IS named"  "config/statusline-command.sh"   "$out"
+
+# ── the fallback source: setup.sh's own precedence for one destination ───────
+# $CFG/CLAUDE.md comes from claude-setup/config/CLAUDE.global.md, and from
+# agents/CLAUDE.md only when NO root ships one. Judging it against the wrong
+# source is how a correct file gets called diverged.
+echo
+echo "with no CLAUDE.global.md shipped, the overlay is judged against agents/CLAUDE.md:"
+build || exit 2
+rm -f "$REPO/claude-setup/config/CLAUDE.global.md"
+printf '# rules\none\ntwo\nthe rule that landed later\n' > "$REPO/agents/CLAUDE.md"
+printf '# rules\none\ntwo\n' > "$CFG/CLAUDE.md"
+out=$(run)
+has   "the overlay is named against the fallback source"      "config/CLAUDE.md"          "$out"
+has   "...as STALE, so --fix may refresh it"                  "STALE"                     "$out"
+
+# ── not line-oriented text: unknown, said out loud, never guessed at ────────
+# ⛔ subset_of compares LINES. Against a binary or generated blob that comparison
+# means nothing, so "stale" about one would be a confident wrong answer - and a
+# confident wrong answer is worse than a red, because nobody re-checks it.
+echo
+echo "a top-level config file that is not line-oriented text:"
+build || exit 2
+printf '{\000"binary": true}\n' > "$REPO/claude-setup/config/supermode.settings.json"
+printf '{\000"binary": false}\n' > "$CFG/supermode.settings.json"
+out=$(run)
+has   "it says CANNOT VERIFY of it"                           "CANNOT VERIFY"                  "$out"
+# ⚠️ Asserted against the STALE LINE ALONE, not the whole report: the fixture has
+# genuinely stale commands and skills, so "STALE" appears either way and a check
+# for its absence would pass for the wrong reason.
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+hasnt "and the STALE list does NOT name it"                   "supermode.settings.json"        "$sline"
+has   "while the line-oriented staleness is still reported"   "config/statusline-command.js"   "$sline"
+
+# ── a personal root this filesystem cannot open ──────────────────────────────
+# ⛔ The third cross-filesystem false positive, refused before it exists. Pointed
+# at the OTHER userland's HOME, the path file there names that side's spelling of
+# the repo. Unopenable is NOT missing, and the report must say which.
+echo
+echo "an ai-memory-path this filesystem cannot open:"
+build || exit 2
+printf 'Z:/nowhere/this/cannot/open\n' > "$CFG/ai-memory-path"
+out=$(run)
+has   "it says CANNOT VERIFY of the personal root"            "CANNOT VERIFY"                  "$out"
+has   "...and says unopenable is not missing, in those words" "NOT missing"                    "$out"
+# ⚠️ The other half of the same requirement: refusing to guess must not turn into
+# refusing to run. Everything the FRAMEWORK root ships is still judged.
+has   "and every other check still ran on the framework root" "commands/stale.md"              "$out"
 
 # ── 2+6: --fix repairs the stale and does not touch the diverged ─────────────
 echo
@@ -150,9 +259,11 @@ build || exit 2
 before_div=$(cat "$CFG/commands/diverged.md")
 before_mine=$(cat "$CFG/skills/diverged-skill/mine.sh")
 before_divskill=$(cat "$CFG/skills/diverged-skill/SKILL.md")
+before_sm=$(cat "$CFG/supermode.settings.json")
 out=$(run --fix)
 has "it says which stale command it refreshed"  "commands/stale.md"   "$out"
 has "it says which stale skill it refreshed"    "skills/stale-skill"  "$out"
+has "it says which stale config file it refreshed" "config/statusline-command.js" "$out"
 
 if cmp -s "$CFG/commands/stale.md" "$REPO/claude-setup/commands/stale.md"; then
 	ok "the stale command now matches the repo byte for byte"
@@ -176,6 +287,27 @@ if [ -f "$CFG/skills/diverged-skill/mine.sh" ] && [ "$(cat "$CFG/skills/diverged
 else
 	bad "⛔ --fix left the file the user wrote inside the diverged skill" "$(clip "$before_mine")" "gone or changed"
 fi
+if cmp -s "$CFG/statusline-command.js" "$REPO/claude-setup/config/statusline-command.js"; then
+	ok "the stale config file now matches the repo byte for byte"
+else
+	bad "the stale config file now matches the repo byte for byte" "identical" "$(clip "$(cat "$CFG/statusline-command.js")")"
+fi
+# ⚠️ A refresh copies CONTENT. Whether the live file is a copy or a symlink is
+# setup's decision (LINK_HOOKS / LINK_CLAUDE_MD), so --fix must not quietly
+# change that - nor drop the execute bit the status line is run by.
+[ ! -L "$CFG/statusline-command.js" ] \
+	&& ok "the refreshed file is still a copy, not silently converted to a symlink" \
+	|| bad "the refreshed file is still a copy, not silently converted to a symlink" "a regular file" "a symlink"
+[ -x "$CFG/statusline-command.js" ] \
+	&& ok "and is still executable after the refresh" \
+	|| bad "and is still executable after the refresh" "mode +x" "not executable"
+[ -L "$CFG/statusline-command.sh" ] \
+	&& ok "--fix left the symlinked twin a symlink" \
+	|| bad "--fix left the symlinked twin a symlink" "a symlink" "replaced by a copy"
+now_sm=$(cat "$CFG/supermode.settings.json")
+[ "$now_sm" = "$before_sm" ] \
+	&& ok "⛔ --fix left the DIVERGED config file exactly as it was" \
+	|| bad "⛔ --fix left the DIVERGED config file exactly as it was" "$(clip "$before_sm")" "$(clip "$now_sm")"
 now_divskill=$(cat "$CFG/skills/diverged-skill/SKILL.md")
 [ "$now_divskill" = "$before_divskill" ] \
 	&& ok "⛔ --fix did not refresh the diverged skill's own SKILL.md either" \
@@ -186,6 +318,7 @@ now_divskill=$(cat "$CFG/skills/diverged-skill/SKILL.md")
 out=$(run --fix)
 hasnt "a second --fix finds nothing stale"                    "STALE"                    "$out"
 hasnt "and does not re-refresh what it already fixed"         "refreshed commands"       "$out"
+hasnt "nor re-refreshes the config file it already fixed"     "refreshed config"         "$out"
 
 echo
 echo "pass=$pass fail=$fail"

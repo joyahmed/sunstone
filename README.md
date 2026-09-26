@@ -286,14 +286,21 @@ copy, with zero lines of their own - never refreshed since the missing sections 
 was a rule whose absence makes an unattended run fail its own commit every slice.
 
 **The keys are the optional half. The half that is not optional is the reporting:**
-`claude-setup/scripts/install-doctor.sh` compares every shipped command and skill against what is
+`claude-setup/scripts/install-doctor.sh` compares every shipped command, skill **and top-level
+config file** (`statusline-command.sh`, `statusline-command.js`, `supermode.settings.json`, the
+`CLAUDE.md` overlay - the ones setup installs straight into `~/.claude`) against what is
 installed and separates two answers - **stale** (every line of the live file is in the repo copy and
 the repo copy has more: a copy nobody touched, only failed to refresh; `--fix` refreshes it) from
 **diverged** (the live file has lines of its own, so it may be a deliberate local edit: reported and
 left alone, never repaired, never backed-up-and-replaced). A symlinked file tracks the repo and is
-not reported at all. `claude-setup/config/hooks/tests/install-doctor-staleness.test.sh` holds the
+not reported at all, and a file that is not line-oriented text is reported as **cannot verify**
+rather than judged by a line test that means nothing for it. The top-level files were the gap that
+made the check worth widening: one machine painted a status line 5 KB behind its repo copy for
+weeks, as a plain copy, while the sibling userland had the same file as a symlink and correct.
+`claude-setup/config/hooks/tests/install-doctor-staleness.test.sh` holds the
 negative controls: a deliberately stale fixture the detector must name, and a hand-edited one
-`--fix` must leave byte-for-byte alone.
+`--fix` must leave byte-for-byte alone - plus the inverse controls, since a detector that flags
+everything is as useless as one that flags nothing.
 
 ## The session bus
 
