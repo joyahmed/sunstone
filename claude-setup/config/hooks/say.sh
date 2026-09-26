@@ -4,12 +4,17 @@
 #
 #   bash ~/.claude/hooks/say.sh "Slice 3 is done. Taking up the README."
 #
-# macOS  -> `say`, best installed voice (premium/enhanced ones appear after a download
-#           in System Settings > Accessibility > Spoken Content > Manage Voices).
+# macOS  -> `say`, with the voice chosen in System Settings unless CLAUDE_VOICE names
+#           one (premium/enhanced variants of a requested name are preferred, and
+#           appear after a download in Accessibility > Spoken Content > Manage Voices).
 # WSL    -> powershell.exe running say.ps1 beside this file (Windows neural voice).
 # Linux  -> Piper (~/.local/share/piper, PIPER_VOICE) if installed, else spd-say or
 #           espeak; otherwise silent.
 # SAY_OFF=1 (or a file ~/.claude/hooks/say-off) silences it everywhere.
+# CLAUDE_VOICE (or the first line of ~/.claude/hooks/claude-voice.txt) names the
+#           voice this machine prefers - honoured by the macOS branch today, and the
+#           intended spelling for the others. Unset, the operating system's own voice
+#           is used: this framework does not choose a voice on anyone's behalf.
 #
 # ⛔ WHY THERE IS A LOG, found on 2026-09-26: every branch below backgrounds its
 # speech process and then exits 0, discarding stdout and stderr. AN EXIT CODE THAT
@@ -110,11 +115,71 @@ say_log() {
 
 if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
   voice=""
-  voices="$(say -v '?' 2>/dev/null)"
-  for v in "Zoe (Premium)" "Ava (Premium)" "Samantha (Enhanced)" "Allison (Enhanced)" \
-           "Zoe (Enhanced)" "Ava (Enhanced)" "Karen (Premium)" "Karen (Enhanced)" "Karen" "Samantha"; do
-    if printf '%s\n' "$voices" | grep -q "^$v "; then voice="$v"; break; fi
-  done
+
+  # First non-empty line of stdin, \r stripped and both ends trimmed - the exact
+  # reading the box-name file gets (first_line in bin/supermode), so the two stay in
+  # step.
+  # ⛔ WHY NOT `cat`: cat hands back the trailing newline, and a file holding only
+  # spaces or a bare newline would become a request for a voice named "" - which is a
+  # REQUEST, not silence, and would ask `say` for a voice that cannot exist instead of
+  # leaving the choice alone. A blank file must read as UNSET. The status line painters
+  # were bitten by precisely this on 2026-09-26.
+  say_first_line() {
+    awk 'NR<=20 { gsub(/\r/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") { print; exit } }' 2>/dev/null
+  }
+
+  # ⭐ What this machine asked for: CLAUDE_VOICE in the environment first, then the
+  # machine-local file. One spelling, meant to be read the same way by every branch that
+  # can pick a voice - and the file lives outside every repo on purpose, because a
+  # preferred voice belongs to the desk, not to the framework.
+  # ⚠️ say.ps1 does NOT read it yet: the Windows branch still selects by its own
+  # hardcoded name list, so this variable governs macOS only until that is fixed too.
+  say_want="$(printf '%s\n' "${CLAUDE_VOICE:-}" | say_first_line)"
+  if [ -z "$say_want" ] && [ -f "$HOME/.claude/hooks/claude-voice.txt" ]; then
+    say_want="$(say_first_line <"$HOME/.claude/hooks/claude-voice.txt")"
+  fi
+
+  # ⛔ THERE IS DELIBERATELY NO DEFAULT LIST HERE, and that is the whole point of this
+  # block. This branch used to hunt down a hardcoded run of five named human voices
+  # before falling back - one person's taste, shipped to every stranger who installs
+  # this framework, with nothing on screen to say why those names and no way to see it
+  # happening. A framework has no business naming the voice that comes out of someone
+  # else's speakers. The operating system already holds a per-user answer, chosen in
+  # System Settings > Accessibility > Spoken Content, so when nothing is requested the
+  # right move is to pass no -v at all and let that answer stand.
+  #
+  # ⭐ What IS kept from the old list is the part that was mechanism rather than taste:
+  # it did per-name quality selection, so that survives, generalised to whatever name
+  # is actually requested. A bare name resolves to the BEST installed variant OF THAT
+  # SAME NAME, so a later free Premium or Enhanced download upgrades quality with no
+  # config edit. A request that already names a variant is treated the same way, by its
+  # base name.
+  #
+  # ⛔ And never anything else: `say -v <not installed>` errors, and a sentence lost to
+  # a typo is the failure being closed here - so a name with no installed variant at all
+  # falls through to the system voice rather than borrowing a different one or failing.
+  say_matched=0
+  if [ -n "$say_want" ]; then
+    say_base="$say_want"
+    case "$say_base" in
+      *' (Premium)'|*' (Enhanced)') say_base="${say_base% (*)}" ;;
+    esac
+    voices="$(say -v '?' 2>/dev/null)"
+    for v in "$say_base (Premium)" "$say_base (Enhanced)" "$say_base"; do
+      # Literal prefix test, not a regex one: this name comes from a file, and a stray
+      # `.` or `*` in it must match no voice rather than the first one on the machine.
+      if printf '%s\n' "$voices" | awk -v n="$v " 'index($0, n) == 1 { f = 1; exit } END { exit !f }'; then
+        voice="$v"; say_matched=1; break
+      fi
+    done
+  fi
+
+  # An unhonoured request is worth a word in the log: it is the one case where the voice
+  # heard is not the voice configured, and it is otherwise completely silent.
+  say_vnote=""
+  if [ -n "$say_want" ] && [ "$say_matched" = "0" ]; then
+    say_vnote=" voice_request=$(say_flatten "$say_want") voice_outcome=no installed variant, used the system voice"
+  fi
   # The caller is freed here; the subshell stays behind to wait for `say` and write
   # the verdict. stdout is still discarded - only stderr is worth keeping - so the
   # latency the caller sees is unchanged: one fork, exactly as before.
@@ -122,7 +187,7 @@ if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
   # made macOS the one platform where a failure left no trace at all.
   (
     err="$(say ${voice:+-v "$voice"} "$text" 2>&1 >/dev/null)"; rc=$?
-    say_log "backend=macos-say voice=${voice:-default} rc=$rc${err:+ stderr=$(say_flatten "$err")}"
+    say_log "backend=macos-say voice=${voice:-system}$say_vnote rc=$rc${err:+ stderr=$(say_flatten "$err")}"
   ) >/dev/null 2>&1 &
   exit 0
 fi
