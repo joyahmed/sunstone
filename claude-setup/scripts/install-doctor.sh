@@ -325,20 +325,49 @@ fi
 # leaves out, is documented at tl_pairs() below beside the loop that walks it.
 #
 # ⚠️ STALE AND DIVERGED ARE DIFFERENT ANSWERS AND ONLY ONE IS SAFE TO FIX.
-#   stale    - every line of the installed file also appears in the repo copy,
-#              and the repo copy has lines the installed one lacks. That is a
-#              copy nobody touched, only failed to refresh. --fix refreshes it.
-#   diverged - the installed file has at least one line of its own. That may be
-#              somebody's deliberate local edit, so it is REPORTED AND LEFT. No
-#              --fix, no backup-and-replace: named, and the person decides.
+#   stale    - the installed file is only an OLD COPY of ours, by either of two
+#              tests: every line of it also appears in the repo copy and the
+#              repo copy has lines it lacks, OR its content is EXACTLY a past
+#              version of that repo path. --fix refreshes it.
+#   diverged - neither: content matching no version any source root's history
+#              has for that path. It is REPORTED AND LEFT - no --fix, no
+#              backup-and-replace: named, and the person decides.
+# A THIRD REPORT, not a third state: when the search through past versions hits
+# its revision cap without a match, the file is named as "no match in the last N
+# revisions" rather than as diverged. Those are different statements, and
+# printing the second when you mean the first is a confident wrong answer.
+#
+# ⚠️ AND THE REPORT NEVER CLAIMS INTENT, only content. A hand-refresh that
+# MERGED versions - somebody pasting part of a repo copy in, or content from two
+# roots - matches no blob while being nobody's deliberate authoring, and no
+# content test can tell that apart from an edit. So the words are "matches no
+# version in history", never "edited here": the first is what was measured, the
+# second is a guess about a person.
 # Reported as ⚠ rather than ⛔ on purpose: nothing is broken right now, the file
 # is merely behind, and that is exactly the definition of the silent class this
 # script prints warnings for.
 #
-# subset_of <installed> <repo> - the predicate above. It is the same one as
-# is_stale_subset() in setup.sh and the two must agree: that one CONVERTS what
-# this one REPORTS. awk, not python3, so a machine without python3 still gets the
-# answer instead of a skipped check.
+# subset_of <installed> <repo> - the predicate above, and BYTE-IDENTICAL to
+# is_stale_subset() in setup.sh on purpose: that one CONVERTS what this one
+# REPORTS. awk, not python3, so a machine without python3 still gets the answer
+# instead of a skipped check.
+#
+# ⚠️ WHAT NOW DIFFERS BETWEEN THE TWO FILES, SO NEITHER COMMENT IS A LIE. This
+# function is unchanged in both. What changed is that the DOCTOR no longer uses
+# it alone: stale_copy() below tries it first and then asks the repo's HISTORY
+# (the block just under it). setup.sh has deliberately NOT been given that
+# second test, for three reasons:
+#   · the two act on opposite answers. A wrong "diverged" HERE is silent and
+#     permanent - --fix skips that file forever and nobody is ever told. A wrong
+#     "diverged" in setup.sh PRINTS "kept <dst> as it is" with the diff to run,
+#     in front of the person running setup, and the copy keeps working;
+#   · setup.sh's answer REPLACES the file with a symlink, so a wrong "stale"
+#     there is destructive in a way this read-only report is not, and its coarse
+#     conservative predicate is the right bias for it;
+#   · keeping this one byte-identical is what preserves the audited invariant -
+#     what the doctor calls a subset is still exactly what setup would convert.
+# If setup.sh is ever given the history test, it belongs beside this function in
+# BOTH files and this comment has to stop saying they differ.
 subset_of() {
   [ -f "$1" ] && [ -f "$2" ] || return 1
   # A zero-length repo file would make awk's FNR==NR true for the second file's
@@ -354,6 +383,212 @@ subset_of() {
   ' "$2" "$1"
 }
 
+# ⛔ WHAT subset_of CANNOT SEE, AND WHY A SECOND TEST HAD TO EXIST. The subset
+# test only recognises staleness that ADDED lines. The moment an upstream commit
+# REMOVES lines, every un-refreshed copy holds lines the repo no longer has -
+# and line-set-wise that is indistinguishable from somebody's deliberate edit,
+# so the conservative branch fires and --fix never touches that file again.
+# APPEND-ONLY GROWTH WAS THE ONLY STALENESS THIS CHECK COULD SEE.
+# Measured, not theorised: on one machine an installed command and a whole skill
+# tree were reported DIVERGED when they were merely OLD - their "local-only"
+# lines were lines that two upstream commits had dropped on purpose. Files
+# reported as somebody's edit, which nobody had edited, and which would
+# therefore have stayed behind forever.
+#
+# So ask the repo instead of guessing: does the installed content equal ANY PAST
+# VERSION of that repo path? If it does, it is an OLD RELEASE of ours - stale,
+# refreshable - whichever lines came or went in between.
+#
+# ⛔ EVERY CANDIDATE ROOT, NOT ONLY THE ONE THAT WINS TODAY. setup installs from
+# the framework root AND the personal overlay, and src_for() below resolves a
+# name to the LAST root that ships it. Which root ships a given command or skill
+# has changed over time: a file can have come from one root at install time and
+# from the other now. Searching only today's winner would report an old release
+# of the OTHER root as content nobody ever shipped - the same false verdict this
+# test exists to remove, reintroduced one level up. So the same repo-relative
+# path is looked up in the history of EVERY root, and a match in any of them is
+# a match.
+#
+# ⭐ BLOB IDS, NOT TEXT. `git hash-object` on the installed file against each
+# <commit>:<path> object id. Exact, immune to line order, and the whole history
+# resolves in ONE `cat-file --batch-check` - where a text diff would need a rule
+# per kind of whitespace and a process per revision.
+#
+# ⭐ TWO TIERS, AND THE REPORT SAYS WHICH ONE ANSWERED. Walking `git log -- <path>`
+# finds a blob only where that PATH carried it, and a path-limited walk misses a
+# rename, a blob that lived on a branch or a merge parent history simplification
+# drops, and anything older than the cap. That miss has already produced a false
+# "nobody ever shipped this" in the field. So when the path-scoped walk finds
+# nothing, the installed blob id is looked up in the repo's OBJECT STORE directly
+# (`cat-file -e`, O(1), no enumeration) - which answers the weaker question "did
+# this content ever exist in this repo" instead of "is this an old release of
+# THIS path". Both make the file refreshable; they are NOT the same claim, and
+# the report prints them on separate lines because a reader deserves to know
+# which one they are being handed.
+#
+# ⚠️ LINE ENDINGS, DECIDED RATHER THAN DISCOVERED. Hashing uses
+# --path=<repo-relative path>, so git applies THE SAME clean filter that made
+# those blobs: on a core.autocrlf checkout a CRLF working copy hashes to the LF
+# blob for free, by git's rule and not one invented here. A checkout with no
+# such filter (the normal Linux case) would still not match a CRLF copy - and a
+# CRLF copy on a mounted Windows drive judged against a LF checkout is exactly
+# the shape this script must survive. So there is ONE retry, with \r bytes
+# removed. That retry cannot manufacture a false match: deleting \r bytes can
+# only collapse two contents that differ in NOTHING BUT \r bytes, which is a
+# line-ending difference and not an edit.
+#
+# ⛔ BOUNDED. A path with a long history must not make the doctor slow, so only
+# the newest $HIST_CAP revisions of it are examined. 50 because the deepest
+# per-file history in the trees this walks is 26 commits (24 in the personal
+# overlay), so 50 is about twice the real worst case and still bounds a
+# pathological path. When the cap is reached WITHOUT a match the answer is "no
+# match in the last N revisions", NOT "diverged": the file may well be an older
+# release than the search went back to, and saying the second thing is the
+# confident wrong answer this whole script exists to remove.
+HIST_CAP="${DOCTOR_HISTORY_CAP:-50}"
+
+# root_rel <absolute source path> -> that path relative to the source root it
+# came from, or empty when it is under no known root. This is the key the history
+# search uses to look the SAME name up in every root.
+root_rel() {
+  for _rr in "${MEM:-}" "$REPO"; do
+    [ -n "$_rr" ] || continue
+    case "$1" in "$_rr"/*) printf '%s\n' "${1#"$_rr"/}"; return ;; esac
+  done
+}
+
+# hist_state_one <installed> <root> <path relative to root>
+#   -> oldrelease | unknown | capped | nohistory
+# One root's answer. <path relative to root> need NOT exist on disk: we are
+# asking the root's HISTORY about that path, and the root that shipped the file
+# originally may not ship it any more.
+# hist_state_one -> oldrelease | oldblob | unknown | capped | nohistory
+hist_state_one() {
+  [ -d "$2" ] || { echo nohistory; return; }
+  # ⚠️ Ask git for the path rather than assembling one by string surgery: the
+  # toplevel git reports can be spelled differently from the path we were handed
+  # (a symlinked temp dir, /tmp vs /private/tmp), and a prefix test against the
+  # wrong spelling would silently disable all of this. --show-prefix also covers
+  # a root that is a SUBDIRECTORY of a larger checkout.
+  _h1_top=$(git -C "$2" rev-parse --show-toplevel 2>/dev/null) || _h1_top=""
+  [ -n "$_h1_top" ] || { echo nohistory; return; }
+  _h1_pfx=$(git -C "$2" rev-parse --show-prefix 2>/dev/null) || _h1_pfx=""
+  _h1_rel="$_h1_pfx$3"
+  # CAP + 1 revisions asked for, CAP of them searched: the extra one is how we
+  # know whether unsearched history exists at all.
+  _h1_shas=$(git -C "$_h1_top" log --format='%H' --max-count=$((HIST_CAP + 1)) -- "$_h1_rel" 2>/dev/null)
+  [ -n "$_h1_shas" ] || { echo nohistory; return; }
+  _h1_seen=$(printf '%s\n' "$_h1_shas" | wc -l | tr -d ' ')
+  _h1_blobs=$(printf '%s\n' "$_h1_shas" | head -n "$HIST_CAP" \
+    | awk -v r=":$_h1_rel" '{ print $0 r }' \
+    | git -C "$_h1_top" cat-file --batch-check 2>/dev/null \
+    | awk '$2 == "blob" { print $1 }')
+  # The installed file's blob id, plus - only when it actually holds a \r - the
+  # one line-ending retry. Both ids are then tried against both tiers.
+  _h1_ids=$(git -C "$_h1_top" hash-object --path="$_h1_rel" -- "$1" 2>/dev/null) || _h1_ids=""
+  if ! LC_ALL=C tr -d '\r' < "$1" | cmp -s - "$1"; then
+    _h1_lf=$(LC_ALL=C tr -d '\r' < "$1" | git -C "$_h1_top" hash-object --path="$_h1_rel" --stdin 2>/dev/null) || _h1_lf=""
+    [ -n "$_h1_lf" ] && _h1_ids="$_h1_ids $_h1_lf"
+  fi
+  # TIER 1, the strong claim: this content is a past version of THIS path.
+  for _h1_w in $_h1_ids; do
+    printf '%s\n' "$_h1_blobs" | grep -qxF "$_h1_w" && { echo oldrelease; return; }
+  done
+  # TIER 2, the weaker claim: this content exists as a blob in this repo at all -
+  # so it came from here, under some path, at some point. cat-file -e is an O(1)
+  # object lookup, not an enumeration of the object graph.
+  for _h1_w in $_h1_ids; do
+    git -C "$_h1_top" cat-file -e "$_h1_w" 2>/dev/null && { echo oldblob; return; }
+  done
+  # ⚠️ Neither tier matched. The object store is NOT a complete record of every
+  # version this repo ever had (gc prunes unreachable objects; a shallow clone
+  # never had the old ones), so when there is ALSO path history the cap stopped
+  # us reading, the honest answer is "did not find it that far back" rather than
+  # "no version ever had it".
+  [ "$_h1_seen" -gt "$HIST_CAP" ] && { echo capped; return; }
+  echo unknown
+}
+
+# hist_state <installed> <repo-file> -> oldrelease | unknown | capped | nohistory
+#   oldrelease - the installed content IS a past version of that path in SOME
+#                source root (the strong claim)
+#   oldblob    - no path-scoped match, but the content exists as a blob in some
+#                root's object store: it came from here under some path. Stale
+#                and refreshable, on weaker evidence, and reported as such.
+#   unknown    - no version that path ever had in any root, and every root's
+#                history for it was searched to the end
+#   capped     - no match, and at least one root has more history than the cap
+#                searched. NOT the same statement as "no version ever had it".
+#   nohistory  - no git, no readable checkout, or no commit in any root touches
+#                that path. The caller falls back to subset_of AND SAYS SO: a
+#                verdict whose basis is unstated is worse than a coarse verdict.
+hist_state() {
+  command -v git >/dev/null 2>&1 || { echo nohistory; return; }
+  [ -f "$1" ] || { echo nohistory; return; }
+  _hs_rel=$(root_rel "$2")
+  _hs_any=0; _hs_cap=0; _hs_blob=0
+  for _hs_r in "${MEM:-}" "$REPO"; do
+    if [ -n "$_hs_rel" ]; then
+      [ -n "$_hs_r" ] || continue
+      _hs_root="$_hs_r"; _hs_p="$_hs_rel"
+    else
+      # A source under no known root (nothing does this today; it keeps the
+      # helper honest if something ever passes an outside path).
+      _hs_root=$(dirname -- "$2"); _hs_p=$(basename -- "$2")
+    fi
+    case "$(hist_state_one "$1" "$_hs_root" "$_hs_p")" in
+      oldrelease) echo oldrelease; return ;;
+      oldblob)    _hs_blob=1; _hs_any=1 ;;
+      capped)     _hs_cap=1; _hs_any=1 ;;
+      unknown)    _hs_any=1 ;;
+    esac
+    [ -n "$_hs_rel" ] || break
+  done
+  # ⚠️ Precedence: a path-scoped match in ANY root beats everything (handled by
+  # the early return), then a content match in any root, then "we did not look
+  # far enough", then "not ours".
+  [ "$_hs_blob" = 1 ] && { echo oldblob; return; }
+  [ "$_hs_cap" = 1 ] && { echo capped; return; }
+  [ "$_hs_any" = 1 ] && { echo unknown; return; }
+  echo nohistory
+}
+# stale_copy <installed> <repo-file> -> 0 when <installed> is ONLY AN OLD COPY of
+# ours: a strict line subset of the current version (the append-only shape), or
+# an exact past version of that repo path (any shape, including one a newer
+# commit removed lines from). subset_of runs FIRST - it is awk over two files
+# and costs nothing in the repo, and both routes give the same verdict.
+stale_copy() {
+  subset_of "$1" "$2" && return 0
+  case "$(hist_state "$1" "$2")" in oldrelease|oldblob) return 0 ;; esac
+  return 1
+}
+
+# hist_any <state> <installed> <repo> - true when <state> is the history answer
+# for this file, or for at least one DIFFERING file inside this tree. Used to
+# qualify a verdict the five states cannot carry on their own: which tier
+# answered ("oldblob"), and whether the search was cut short ("capped").
+# ⚠️ A file the subset test already settled is skipped - its staleness does not
+# rest on history at all, and labelling it by a history tier would misreport it.
+# ⚠️ A tree holding a file the repo does not ship AT ALL is diverged for a reason
+# no history can soften, so no qualifier applies to it.
+hist_any() {
+  if [ -d "$2" ]; then
+    for _hc_f in $(find "$2" -type f 2>/dev/null); do
+      _hc_r=${_hc_f#"$2"/}
+      [ -f "$3/$_hc_r" ] || return 1
+    done
+    for _hc_f in $(find "$2" -type f 2>/dev/null); do
+      _hc_r=${_hc_f#"$2"/}
+      cmp -s "$_hc_f" "$3/$_hc_r" && continue
+      subset_of "$_hc_f" "$3/$_hc_r" && continue
+      [ "$(hist_state "$_hc_f" "$3/$_hc_r")" = "$1" ] && return 0
+    done
+    return 1
+  fi
+  subset_of "$2" "$3" && return 1
+  [ "$(hist_state "$2" "$3")" = "$1" ]
+}
+
 # file_state <installed> <repo> -> link | same | stale | diverged | absent
 file_state() {
   if [ -L "$1" ]; then
@@ -364,13 +599,14 @@ file_state() {
   fi
   [ -e "$1" ] || { echo absent; return; }
   cmp -s "$1" "$2" && { echo same; return; }
-  subset_of "$1" "$2" && { echo stale; return; }
+  stale_copy "$1" "$2" && { echo stale; return; }
   echo diverged
 }
 
 # tree_state <installed-dir> <repo-dir> -> link | same | stale | diverged | absent
 # A tree is only "stale" when it holds no file of its own AND every file that
-# differs is a stale subset. One installed-only file makes the whole tree
+# differs is an old copy by stale_copy's test. One installed-only file makes the
+# whole tree
 # diverged: a skill is replaced whole, so that file is what would be destroyed.
 tree_state() {
   if [ -L "$1" ]; then
@@ -384,7 +620,7 @@ tree_state() {
     [ -f "$2/$_rel" ] || { echo diverged; return; }
     cmp -s "$f" "$2/$_rel" && continue
     _any_diff=1
-    subset_of "$f" "$2/$_rel" || { echo diverged; return; }
+    stale_copy "$f" "$2/$_rel" || { echo diverged; return; }
   done
   # A file the repo added and this tree never received is staleness too, and the
   # loop above cannot see it - it only walks what is installed.
@@ -404,7 +640,29 @@ src_for() {  # <rel-path> -> absolute source path, or empty
   done
 }
 
-stale_list=""; diverged_list=""; absent_list=""; tracked=0
+# ⛔ WHICH TEST THIS RUN IS ABLE TO USE, settled once and STATED in the report.
+# The history test needs a readable git checkout of the source, and there are
+# ordinary installs that have none: a tarball, a copied directory with no .git,
+# or - the case check 0 above already apologises for - a root named in a spelling
+# this filesystem cannot open. In any of those the check degrades to the subset
+# test, which can only see staleness that ADDED lines. A coarse verdict is fine;
+# a coarse verdict presented as a fine one is not, so the basis is printed.
+# ⚠️ The roots are NAMED in the report, by the basename this run resolved them
+# to - so "no ancestor match" is a claim a reader can go and check, rather than
+# one they have to trust. Derived at run time, never written into this file: it
+# must name no repository (see the header).
+hist_roots=0; nohist_roots=0; hist_root_names=""
+for _r in "${MEM:-}" "$REPO"; do
+  [ -n "$_r" ] || continue
+  if git -C "$_r" rev-parse --show-toplevel >/dev/null 2>&1; then
+    hist_roots=$((hist_roots+1))
+    hist_root_names="${hist_root_names:+$hist_root_names + }${_r##*/}"
+  else
+    nohist_roots=$((nohist_roots+1))
+  fi
+done
+
+stale_list=""; diverged_list=""; absent_list=""; capped_list=""; weak_list=""; tracked=0
 # commands: one .md per slash command
 for root in "$REPO" "${MEM:-}"; do
   [ -n "$root" ] && [ -d "$root/claude-setup/commands" ] || continue
@@ -415,8 +673,12 @@ for root in "$REPO" "${MEM:-}"; do
     [ "$real" = "$src" ] || continue     # a later root ships it; judged there
     tracked=$((tracked+1))
     case "$(file_state "$CFG/commands/$name" "$real")" in
-      stale)    stale_list="$stale_list commands/$name" ;;
-      diverged) diverged_list="$diverged_list commands/$name" ;;
+      stale)    stale_list="$stale_list commands/$name"
+                hist_any oldblob "$CFG/commands/$name" "$real" \
+                  && weak_list="$weak_list commands/$name" ;;
+      diverged) if hist_any capped "$CFG/commands/$name" "$real"
+                then capped_list="$capped_list commands/$name"
+                else diverged_list="$diverged_list commands/$name"; fi ;;
       absent)   absent_list="$absent_list commands/$name" ;;
     esac
   done
@@ -431,8 +693,12 @@ for root in "$REPO" "${MEM:-}"; do
     [ "$real" = "${src%/}" ] || continue
     tracked=$((tracked+1))
     case "$(tree_state "$CFG/skills/$name" "$real")" in
-      stale)    stale_list="$stale_list skills/$name" ;;
-      diverged) diverged_list="$diverged_list skills/$name" ;;
+      stale)    stale_list="$stale_list skills/$name"
+                hist_any oldblob "$CFG/skills/$name" "$real" \
+                  && weak_list="$weak_list skills/$name" ;;
+      diverged) if hist_any capped "$CFG/skills/$name" "$real"
+                then capped_list="$capped_list skills/$name"
+                else diverged_list="$diverged_list skills/$name"; fi ;;
       absent)   absent_list="$absent_list skills/$name" ;;
     esac
   done
@@ -500,14 +766,23 @@ for pairv in $(tl_pairs); do
   st=$(file_state "$CFG/$name" "$real")
   case "$st" in
     stale|diverged)
-      if ! line_text "$CFG/$name" || ! line_text "$real"; then
-        warn "config/$name differs from the repo copy and is NOT line-oriented text - the subset test that separates stale from diverged means nothing for such a file, so this is CANNOT VERIFY rather than a guess"
+      # ⚠️ ...unless the HISTORY test is what answered. A blob-id match is an
+      # exact content identity, and it means precisely the same thing for a
+      # generated blob as for text: this is a past version of that repo path.
+      # Only the LINE comparison is meaningless here, so only it is refused.
+      if { ! line_text "$CFG/$name" || ! line_text "$real"; } \
+         && ! case "$(hist_state "$CFG/$name" "$real")" in oldrelease|oldblob) true ;; *) false ;; esac; then
+        warn "config/$name differs from the repo copy, is NOT line-oriented text, and matches no past version of that repo path - the subset test that would otherwise separate stale from diverged means nothing for such a file, so this is CANNOT VERIFY rather than a guess"
         continue
       fi ;;
   esac
   case "$st" in
-    stale)    stale_list="$stale_list config/$name" ;;
-    diverged) diverged_list="$diverged_list config/$name" ;;
+    stale)    stale_list="$stale_list config/$name"
+              hist_any oldblob "$CFG/$name" "$real" \
+                && weak_list="$weak_list config/$name" ;;
+    diverged) if hist_any capped "$CFG/$name" "$real"
+              then capped_list="$capped_list config/$name"
+              else diverged_list="$diverged_list config/$name"; fi ;;
     absent)
       # ⛔ The two statusline twins are SEPARATE files under a parity contract,
       # never substitutes for each other - and they are installed by different
@@ -529,6 +804,11 @@ done
 if [ "$tracked" = "0" ]; then
   warn "commands/skills/config: nothing shipped to compare - this check did NOT run"
 else
+  if [ "$nohist_roots" = "0" ]; then
+    ok "commands/skills/config: old-copy-vs-current decided against REPO HISTORY - exact blob ids against every past version of each path in $hist_root_names (newest $HIST_CAP revisions of each), then against those repos' whole object stores, so a copy an upstream commit REMOVED lines from, one that shipped from the other root, or one whose path was renamed, is still recognised as an old release of ours"
+  else
+    warn "commands/skills/config: old-copy-vs-current fell back to the LINE-SUBSET test - $nohist_roots of $((hist_roots + nohist_roots)) source root(s) expose no readable git history (not a checkout, or a root this filesystem cannot open), so no past version can be looked up there. That test sees only a copy MISSING lines: one a newer commit removed lines from is indistinguishable from a local change, and is named below as differing."
+  fi
   if [ -n "$stale_list" ]; then
     if [ "$FIX" = "1" ]; then
       for item in $stale_list; do
@@ -559,9 +839,25 @@ else
       warn "STALE - installed but never refreshed since the repo moved on:$stale_list   (this script with --fix refreshes them; LINK_COMMANDS=1 / LINK_SKILLS=1 / LINK_CLAUDE_MD=1 / LINK_HOOKS=1 in sunstone.conf stop it happening again, each for its own kind)"
     fi
   fi
-  [ -n "$diverged_list" ] && warn "DIVERGED - edited here, so NOT touched and not refreshable:$diverged_list   (diff each against the repo; keep the local change or delete the file and re-run setup)"
+  if [ -n "$diverged_list" ]; then
+    if [ "$nohist_roots" = "0" ]; then
+      warn "DIVERGED - matches no version in history: no past version of the path in $hist_root_names (newest $HIST_CAP revisions of each searched) has this content, and neither does any blob in those repos' object stores, so NOT touched and not refreshable:$diverged_list   (diff each against the repo; keep the local change or delete the file and re-run setup)"
+    else
+      warn "DIVERGED - differs by more than the line-subset test can call out of date, and no past version could be looked up at all (see the basis line above), so NOT touched and not refreshable:$diverged_list   (diff each against the repo; keep the local change or delete the file and re-run setup)"
+    fi
+  fi
+  # ⛔ NOT the same statement as DIVERGED, and it gets its own line for that
+  # reason. These matched no version of their repo path within the cap, and there
+  # is older history the search never reached - so "not recognised", never
+  # "edited here". --fix leaves them alone exactly as it leaves a diverged file.
+  # ⚠️ STALE on the weaker of the two tiers, said out loud. "This content came
+  # from this repo" is not "this is an old release of this path": a rename, a
+  # branch, or path history deeper than the cap all look exactly like this.
+  # Refreshable either way - what differs is the strength of the claim.
+  [ -n "$weak_list" ] && warn "stale on a CONTENT match, not a path match - no match in the last $HIST_CAP revisions of their own path, but the content IS a blob in the object store of $hist_root_names, so it came from here under some path (a rename, a branch, or history deeper than the cap all look like this). Refreshable, and --fix does:$weak_list"
+  [ -n "$capped_list" ] && warn "no match in the last $HIST_CAP revisions of the path in ${hist_root_names:-the source root} and no matching blob in the object store either, but older path history exists that this run did NOT search - so NOT refreshed, and NOT reported as diverged either:$capped_list   (DOCTOR_HISTORY_CAP=<n> searches further back; or diff each against the repo yourself)"
   [ -n "$absent_list" ] && warn "commands/skills/config shipped but never installed:$absent_list   (re-run setup)"
-  [ -z "$stale_list$diverged_list$absent_list" ] && ok "commands/skills/config: all $tracked match the repo (or are symlinks to it)"
+  [ -z "$stale_list$diverged_list$absent_list$capped_list" ] && ok "commands/skills/config: all $tracked match the repo (or are symlinks to it)"
 fi
 
 # The two sibling skill stores setup also writes. They belong to tools that are

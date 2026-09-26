@@ -35,6 +35,31 @@
 # pinned is that the twin an OS's installer does not ship is not called
 # "never installed" while the other twin is present.
 #
+# ⛔ AND THE SHAPE THAT THE SUBSET TEST STRUCTURALLY CANNOT SEE gets its own
+# fixtures, with REAL git history, because the answer now comes from the repo
+# rather than from a line comparison. When an upstream commit REMOVES lines,
+# every un-refreshed copy holds lines the repo no longer has - line-set-wise
+# identical to somebody's local edit, so the conservative branch fired and --fix
+# would never touch that file again. APPEND-ONLY GROWTH WAS THE ONLY STALENESS
+# THE DETECTOR COULD SEE. Measured on a live machine: an installed command and a
+# whole skill tree reported DIVERGED when they were merely OLD.
+#
+# Four history fixtures, and each has its inverse control in the same scenario,
+# because a history test that answers "old release" too readily is a SILENT
+# CLOBBER and would look exactly like success:
+#   · installed == an ancestor version, newest version REMOVED lines  ⇒ stale,
+#     and --fix refreshes it. Beside it: content that never existed in that
+#     path's history ⇒ diverged, and byte-identical after --fix.
+#   · installed == an ancestor version of the OTHER source root (a name that
+#     moved between the framework repo and the personal overlay) ⇒ stale.
+#     Beside it: content in NEITHER root's history ⇒ diverged, untouched.
+#   · history deeper than the revision cap, match older than the cap ⇒ reported
+#     as "no match in the last N revisions", NEVER as a bare diverged. Beside
+#     it: the same file with the cap raised ⇒ stale, which is what proves the
+#     cap was the only reason.
+#   · no .git at all ⇒ the subset test, and the report SAYS that is what decided
+#     it. A verdict whose basis is unstated is worse than a coarse verdict.
+#
 #   bash install-doctor-staleness.test.sh      (DOCTOR=/path/to/install-doctor.sh)
 #
 # ⛔ EVERY CASE RUNS UNDER A FAKE $HOME AND A FAKE REPO, BY CONSTRUCTION. The
@@ -53,7 +78,9 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DOCTOR="${DOCTOR:-$HERE/../../../scripts/install-doctor.sh}"
 
 [ -f "$DOCTOR" ] || { echo "install-doctor.sh not found at $DOCTOR - set DOCTOR=/path/to/it"; exit 2; }
-for t in awk cmp diff find; do
+# ⛔ git included: the history fixtures need real commits, and a battery that
+# silently stops exercising the history test would be the invisible fault again.
+for t in awk cmp diff find git; do
 	command -v "$t" >/dev/null 2>&1 || { echo "no $t - the detector cannot be exercised"; exit 2; }
 done
 
@@ -72,9 +99,10 @@ hasnt() { case "$3" in *"$2"*) bad "$1" "output does NOT contain '$2'" "$(clip "
 # The whole fixture: a scratch repo with the doctor inside it, and a scratch
 # ~/.claude beside it. Rebuilt from scratch per scenario, because --fix mutates
 # it and a second scenario must not inherit the first one's repairs.
-REPO="" CFG="" FHOME=""
+REPO="" CFG="" FHOME="" HCAP=""
 build() {
 	FHOME=$(mktemp -d "$TMPROOT/home.XXXXXX") || return 1
+	HCAP=""                       # per-scenario revision cap; empty = the script's own default
 	REPO="$FHOME/repo"; CFG="$FHOME/.claude"
 	mkdir -p "$REPO/claude-setup/scripts" "$REPO/claude-setup/commands" "$REPO/skills" \
 	         "$REPO/claude-setup/config" "$REPO/agents" "$CFG/commands" "$CFG/skills"
@@ -134,12 +162,50 @@ build() {
 	printf '{\n  "permissions": {},\n  "myOwnKey": true\n}\n' > "$CFG/supermode.settings.json"
 }
 
+# gitify <dir> - turn a scratch directory into a REAL git repo. The history test
+# can only be exercised against real history, and a fake would test nothing.
+# ⛔ core.hooksPath is neutralised and identity/signing pinned locally: this
+# machine may have a global hooks path and a signing key, and a fixture commit
+# must neither run the person's hooks nor need their key.
+gitify() {
+	git -C "$1" init -q >/dev/null 2>&1 || return 1
+	git -C "$1" config user.email fixture@example.invalid || return 1
+	git -C "$1" config user.name "staleness battery" || return 1
+	git -C "$1" config commit.gpgsign false || return 1
+	git -C "$1" config core.autocrlf false || return 1
+	git -C "$1" config core.hooksPath "$1/.git/hooks-disabled" || return 1
+}
+commit_all() {  # <dir> <message>
+	git -C "$1" add -A >/dev/null 2>&1 || return 1
+	git -C "$1" commit -q -m "$2" >/dev/null 2>&1
+}
+
+# not_subset <installed> <repo copy> - 0 when <installed> holds at least one line
+# the repo copy does not. That is EXACTLY the condition under which the old
+# subset-only predicate answered "diverged", so asserting it proves a history
+# fixture really reproduces the gap instead of passing for some other reason.
+not_subset() {
+	awk 'FNR==NR { r[$0]=1; next } !($0 in r) { f=1 } END { exit f ? 0 : 1 }' "$2" "$1"
+}
+
 # Run the doctor against the fixture and print only check 8's lines, so an
 # unrelated finding on the machine running this battery cannot match an assertion.
+# ⛔ GIT_CEILING_DIRECTORIES pins the fixtures' history to the fixtures. Without
+# it, a non-git fixture under a TMPDIR that happens to sit inside somebody's
+# checkout would find THAT repo's history and the no-history case would pass or
+# fail for a reason nothing here controls.
+only8() {
+	grep -E 'STALE|DIVERGED|commands/skills|never installed|refreshed|CANNOT VERIFY|match the repo|no match in the last' || true
+}
 run() {
-	HOME="$FHOME" CLAUDE_CONFIG_DIR="$CFG" \
-		bash "$REPO/claude-setup/scripts/install-doctor.sh" "$@" 2>&1 \
-		| grep -E 'STALE|DIVERGED|commands/skills|never installed|refreshed|CANNOT VERIFY|match the repo' || true
+	if [ -n "$HCAP" ]; then
+		env HOME="$FHOME" CLAUDE_CONFIG_DIR="$CFG" GIT_CEILING_DIRECTORIES="$TMPROOT" \
+			DOCTOR_HISTORY_CAP="$HCAP" \
+			bash "$REPO/claude-setup/scripts/install-doctor.sh" "$@" 2>&1 | only8
+	else
+		env HOME="$FHOME" CLAUDE_CONFIG_DIR="$CFG" GIT_CEILING_DIRECTORIES="$TMPROOT" \
+			bash "$REPO/claude-setup/scripts/install-doctor.sh" "$@" 2>&1 | only8
+	fi
 }
 
 # ── 1+3+4+5: what a report names, and what it must not ───────────────────────
@@ -164,6 +230,15 @@ has   "⛔ the STALE top-level config COPY is named"            "config/statusli
 has   "the DIVERGED top-level config file is named"           "config/supermode.settings.json" "$out"
 hasnt "⛔ inverse control: a SYMLINKED top-level file is NOT flagged"  "config/statusline-command.sh" "$out"
 hasnt "⛔ inverse control: an IDENTICAL top-level file is NOT flagged" "config/CLAUDE.md"             "$out"
+# ── the basis, on a source root with no .git at all ───────────────────────────
+# ⛔ This fixture is a plain directory: no history to ask, so the verdicts above
+# came from the line subset test alone - which can only see staleness that ADDED
+# lines. That is a legitimate install shape (a tarball, a copied tree, a root in
+# a spelling this filesystem cannot open) and the report must SAY which test
+# answered. A verdict whose basis is unstated is worse than a coarse verdict.
+has   "⛔ it names the test that decided, when there is no history to ask" "LINE-SUBSET" "$out"
+has   "...and says why that is what it fell back to"          "no readable git history"   "$out"
+hasnt "...and does not claim to have searched any history"    "REPO HISTORY"             "$out"
 
 # ── a fixture with nothing wrong must read clean, or the check is noise ──────
 echo
@@ -251,6 +326,247 @@ has   "...and says unopenable is not missing, in those words" "NOT missing"     
 # ⚠️ The other half of the same requirement: refusing to guess must not turn into
 # refusing to run. Everything the FRAMEWORK root ships is still judged.
 has   "and every other check still ran on the framework root" "commands/stale.md"              "$out"
+
+# ── HISTORY, case 1: the shape the subset test structurally cannot see ───────
+# ⛔ THE BUG THIS EXISTS FOR, reproduced exactly. An upstream commit REMOVES
+# lines; the un-refreshed copy therefore holds lines the repo no longer has, and
+# the line-subset test calls that a local edit - so --fix would never touch the
+# file again, forever, silently. The fixture asserts the gap first (not_subset),
+# so a green here cannot come from the fixture accidentally being a plain subset.
+echo
+echo "history: an installed copy that a later commit REMOVED lines from:"
+build || exit 2
+printf 'head\nSAMPLE LINE A\nSAMPLE LINE B\nSAMPLE LINE C\ntail\n' > "$REPO/claude-setup/commands/oldrelease.md"
+printf 'head\nshipped line\n'                                      > "$REPO/claude-setup/commands/handedit.md"
+# ⛔ AND THE TREE EDITION, because the live report was a SKILL directory, not a
+# single file: tree_state judges a tree file by file, so the history test has to
+# reach it there too or a whole skill stays un-refreshable.
+mkdir -p "$REPO/skills/hist-skill" "$REPO/skills/hist-diverged" \
+         "$CFG/skills/hist-skill" "$CFG/skills/hist-diverged"
+printf 'name: h\nA SAMPLE THE NEXT COMMIT DROPS\nbody\n'          > "$REPO/skills/hist-skill/SKILL.md"
+printf 'name: d\nbody\n'                                          > "$REPO/skills/hist-diverged/SKILL.md"
+gitify "$REPO"                              || { echo "git init failed in the fixture"; exit 2; }
+commit_all "$REPO" "the release that got installed" || { echo "fixture commit failed"; exit 2; }
+# the copy that was installed from THAT release, byte for byte
+cp "$REPO/claude-setup/commands/oldrelease.md" "$CFG/commands/oldrelease.md"
+# ...and now the repo moves on by DELETING those lines.
+printf 'head\ntail\nthe rule that landed later\n'                  > "$REPO/claude-setup/commands/oldrelease.md"
+printf 'head\nshipped line\nand a line that landed later\n'        > "$REPO/claude-setup/commands/handedit.md"
+cp "$REPO/skills/hist-skill/SKILL.md" "$CFG/skills/hist-skill/SKILL.md"
+printf 'name: h\nbody\nthe guard that landed later\n'             > "$REPO/skills/hist-skill/SKILL.md"
+printf 'name: d\nbody\nand more\n'                               > "$REPO/skills/hist-diverged/SKILL.md"
+commit_all "$REPO" "an upstream commit that removes lines"         || { echo "fixture commit failed"; exit 2; }
+# ⛔ INVERSE CONTROL, tree edition: a SKILL.md matching no version in history.
+printf 'name: d\nbody I wrote myself\n'                           > "$CFG/skills/hist-diverged/SKILL.md"
+# ⛔ INVERSE CONTROL, in the same scenario: content that matches NO version this
+# path ever had. This is what stops the history test from becoming a silent
+# clobber - without it, a test that answered "old release" to everything passes.
+printf 'head\nsomething no version ever shipped\n'                 > "$CFG/commands/handedit.md"
+
+if not_subset "$CFG/commands/oldrelease.md" "$REPO/claude-setup/commands/oldrelease.md"; then
+	ok "⛔ the fixture really reproduces the gap: the installed copy holds lines the repo no longer has"
+else
+	bad "⛔ the fixture really reproduces the gap" "installed lines the repo copy lacks" "a plain subset - this would pass for the wrong reason"
+fi
+out=$(run)
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+has   "⛔ an exact past version is STALE, not diverged"        "commands/oldrelease.md"  "$sline"
+hasnt "...and is NOT in the diverged list"                     "commands/oldrelease.md"  "$dline"
+has   "the append-only subset case is unchanged by all this"   "commands/stale.md"       "$sline"
+has   "⛔ inverse control: content no version ever had is DIVERGED" "commands/handedit.md" "$dline"
+hasnt "...and is NOT offered as refreshable"                   "commands/handedit.md"    "$sline"
+has   "⛔ the SKILL TREE edition of the same shape is STALE too"  "skills/hist-skill"      "$sline"
+hasnt "...and the tree is NOT in the diverged list"            "skills/hist-skill"       "$dline"
+has   "⛔ inverse control, tree edition: no version ever had it ⇒ DIVERGED" "skills/hist-diverged" "$dline"
+has   "the report names the basis it used"                     "REPO HISTORY"            "$out"
+has   "...and the diverged verdict says what it searched"      "matches no version in history" "$out"
+has   "...with the depth it searched to"                       "newest 50 revisions"     "$out"
+
+# --fix on the same fixture: refresh the old release, leave the other alone.
+before_hand=$(cat "$CFG/commands/handedit.md")
+before_hdiv=$(cat "$CFG/skills/hist-diverged/SKILL.md")
+out=$(run --fix)
+has "--fix refreshed the old release"                          "commands/oldrelease.md"  "$out"
+if cmp -s "$CFG/commands/oldrelease.md" "$REPO/claude-setup/commands/oldrelease.md"; then
+	ok "⛔ and it now matches the repo byte for byte - the shape no --fix could ever reach before"
+else
+	bad "⛔ the refreshed old release matches the repo byte for byte" "identical" "$(clip "$(cat "$CFG/commands/oldrelease.md")")"
+fi
+now_hand=$(cat "$CFG/commands/handedit.md")
+[ "$now_hand" = "$before_hand" ] \
+	&& ok "⛔ INVERSE CONTROL: --fix left the file matching no version byte-identical" \
+	|| bad "⛔ INVERSE CONTROL: --fix left the file matching no version byte-identical" "$(clip "$before_hand")" "$(clip "$now_hand")"
+if cmp -s "$CFG/skills/hist-skill/SKILL.md" "$REPO/skills/hist-skill/SKILL.md"; then
+	ok "the skill tree that was an old release now matches the repo byte for byte"
+else
+	bad "the skill tree that was an old release now matches the repo" "identical" "$(clip "$(cat "$CFG/skills/hist-skill/SKILL.md")")"
+fi
+now_hdiv=$(cat "$CFG/skills/hist-diverged/SKILL.md")
+[ "$now_hdiv" = "$before_hdiv" ] \
+	&& ok "⛔ INVERSE CONTROL: --fix left the no-version-match SKILL.md byte-identical" \
+	|| bad "⛔ INVERSE CONTROL: --fix left the no-version-match SKILL.md byte-identical" "$(clip "$before_hdiv")" "$(clip "$now_hdiv")"
+
+# ── HISTORY, case 2: the OTHER source root's history counts too ──────────────
+# ⛔ setup installs from the framework root AND the personal overlay, and the
+# overlay WINS. Which root ships a given name has changed over time, so a copy
+# can be an old release of the root that does NOT ship it any more. Searching
+# only today's winner reintroduces the same false verdict one level up.
+echo
+echo "history: an old release that shipped from the OTHER source root:"
+build || exit 2
+PERS="$FHOME/personal"
+mkdir -p "$PERS/claude-setup/commands"
+printf 'head\nFRAMEWORK ONLY LINE A\nFRAMEWORK ONLY LINE B\ntail\n' > "$REPO/claude-setup/commands/crossroot.md"
+printf 'head\nshipped line\n'                                       > "$REPO/claude-setup/commands/nomatch.md"
+gitify "$REPO"                                     || { echo "git init failed"; exit 2; }
+commit_all "$REPO" "the framework root shipped it" || { echo "fixture commit failed"; exit 2; }
+# the copy installed from the FRAMEWORK root's release
+cp "$REPO/claude-setup/commands/crossroot.md" "$CFG/commands/crossroot.md"
+# the name now lives in the personal overlay, which wins src_for and whose own
+# history never held that version...
+printf 'head\ntail\nthe personal overlay version\n'                 > "$PERS/claude-setup/commands/crossroot.md"
+printf 'head\nshipped line\nand more from the overlay\n'            > "$PERS/claude-setup/commands/nomatch.md"
+gitify "$PERS"                                     || { echo "git init failed"; exit 2; }
+commit_all "$PERS" "the personal overlay ships it now" || { echo "fixture commit failed"; exit 2; }
+# ...and the framework root drops those lines too, so NOTHING current has them.
+printf 'head\ntail\nthe framework root moved on\n'                  > "$REPO/claude-setup/commands/crossroot.md"
+commit_all "$REPO" "the framework root drops them too" || { echo "fixture commit failed"; exit 2; }
+printf '%s\n' "$PERS" > "$CFG/ai-memory-path"
+# ⛔ INVERSE CONTROL: content in NEITHER root's history.
+printf 'head\nnothing in either root ever shipped this\n'           > "$CFG/commands/nomatch.md"
+
+out=$(run)
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+has   "⛔ an old release of the root that no longer ships it is STALE" "commands/crossroot.md" "$sline"
+hasnt "...and is NOT reported as diverged"                      "commands/crossroot.md"  "$dline"
+has   "⛔ inverse control: no match in EITHER root is DIVERGED" "commands/nomatch.md"    "$dline"
+hasnt "...and is NOT offered as refreshable"                   "commands/nomatch.md"    "$sline"
+has   "the report NAMES both roots it searched, so the claim is checkable" "personal + repo" "$out"
+before_nm=$(cat "$CFG/commands/nomatch.md")
+out=$(run --fix)
+if cmp -s "$CFG/commands/crossroot.md" "$PERS/claude-setup/commands/crossroot.md"; then
+	ok "--fix refreshed it from the root that ships it TODAY, not the one it matched"
+else
+	bad "--fix refreshed it from the root that ships it TODAY" "identical to the overlay copy" "$(clip "$(cat "$CFG/commands/crossroot.md")")"
+fi
+now_nm=$(cat "$CFG/commands/nomatch.md")
+[ "$now_nm" = "$before_nm" ] \
+	&& ok "⛔ INVERSE CONTROL: --fix left the no-match-anywhere file byte-identical" \
+	|| bad "⛔ INVERSE CONTROL: --fix left the no-match-anywhere file byte-identical" "$(clip "$before_nm")" "$(clip "$now_nm")"
+
+# ── HISTORY, case 3: deeper than the cap weakens the CLAIM, and it says so ───
+# ⛔ The cost bound has to be honest about itself. Past the cap the path-scoped
+# walk stops, so the strong claim ("an old release of THIS path") is no longer
+# available - but the content can still be found in the repo's object store,
+# which answers the weaker "this came from here, under some path". Refreshable
+# either way; the two are NOT the same statement and the report separates them.
+echo
+echo "history deeper than the revision cap: the claim gets weaker, and says which:"
+build || exit 2
+printf 'head\nOLDEST ONLY A\nOLDEST ONLY B\ntail\n' > "$REPO/claude-setup/commands/deep.md"
+gitify "$REPO"                                   || { echo "git init failed"; exit 2; }
+commit_all "$REPO" "v1 - the version that got installed" || { echo "fixture commit failed"; exit 2; }
+cp "$REPO/claude-setup/commands/deep.md" "$CFG/commands/deep.md"
+i=2
+while [ "$i" -le 5 ]; do
+	printf 'head\ntail\nrevision %s\n' "$i" > "$REPO/claude-setup/commands/deep.md"
+	commit_all "$REPO" "v$i - the oldest lines are long gone" || { echo "fixture commit failed"; exit 2; }
+	i=$((i + 1))
+done
+HCAP=2                                   # 5 revisions exist; the match is the oldest
+out=$(run)
+wline=$(printf '%s\n' "$out" | grep 'no match in the last' || true)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+has   "it says how far back the path walk looked, in those words" "no match in the last 2 revisions" "$out"
+has   "...and names the file on that line"                     "commands/deep.md"        "$wline"
+has   "...and says which claim it is making instead"           "CONTENT match, not a path match" "$wline"
+hasnt "⛔ and does NOT report it as a bare DIVERGED"            "commands/deep.md"        "$dline"
+# ⭐ THE CONTROL THAT PROVES THE CAP WAS THE ONLY THING IN THE WAY. Raise it and
+# the SAME file earns the strong claim, with no weaker-claim line at all.
+HCAP=50
+out=$(run)
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+has   "⭐ with the cap raised the SAME file is a path match"    "commands/deep.md"        "$sline"
+hasnt "...and the weaker-claim line is gone entirely"          "no match in the last"    "$out"
+# and either way --fix may refresh it: an old release is an old release.
+HCAP=2
+out=$(run --fix)
+if cmp -s "$CFG/commands/deep.md" "$REPO/claude-setup/commands/deep.md"; then
+	ok "--fix refreshed it on the weaker claim too"
+else
+	bad "--fix refreshed it on the weaker claim too" "identical" "$(clip "$(cat "$CFG/commands/deep.md")")"
+fi
+
+# ── HISTORY, case 4: a RENAMED path, at the default cap ──────────────────────
+# ⛔ A `git log -- <path>` walk cannot see a blob the path did not carry, and a
+# rename is the everyday way that happens. This is the miss that produced a false
+# "nobody ever shipped this" in the field, so it gets its own fixture at the
+# DEFAULT cap - nothing here is cap-limited, the path walk simply cannot reach it.
+echo
+echo "a path that was RENAMED, so the path walk cannot reach the old blob:"
+build || exit 2
+printf 'head\nTHE LINE THE OLD PATH CARRIED\ntail\n' > "$REPO/claude-setup/commands/oldname.md"
+gitify "$REPO"                                   || { echo "git init failed"; exit 2; }
+commit_all "$REPO" "shipped under its first name" || { echo "fixture commit failed"; exit 2; }
+cp "$REPO/claude-setup/commands/oldname.md" "$CFG/commands/newname.md"
+git -C "$REPO" mv claude-setup/commands/oldname.md claude-setup/commands/newname.md >/dev/null 2>&1 \
+	|| { echo "git mv failed"; exit 2; }
+printf 'head\ntail\nrewritten under the new name\n' > "$REPO/claude-setup/commands/newname.md"
+commit_all "$REPO" "renamed, and rewritten"      || { echo "fixture commit failed"; exit 2; }
+out=$(run)
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+wline=$(printf '%s\n' "$out" | grep 'no match in the last' || true)
+has   "⛔ the pre-rename blob is found, so the file is STALE"   "commands/newname.md"     "$sline"
+hasnt "⛔ and NOT reported as content nobody ever shipped"      "commands/newname.md"     "$dline"
+has   "...on the weaker claim, and the report says so"         "commands/newname.md"     "$wline"
+
+# ── HISTORY, case 5: the cap reached AND no content match anywhere ───────────
+# ⛔ "No match in the last N revisions" and "matches no version in history" are
+# different statements. The object store is not a complete historical record (gc
+# prunes, a shallow clone never had the old objects), so with path history left
+# unread the answer is "did not find it that far back" - NOT refreshed, and NOT
+# called diverged either. Printing the second when you mean the first is exactly
+# the class of confident wrong answer this script exists to remove.
+echo
+echo "the cap reached with no content match anywhere: neither refreshed nor called diverged:"
+build || exit 2
+printf 'head\nv1\ntail\n' > "$REPO/claude-setup/commands/deep2.md"
+gitify "$REPO"                                   || { echo "git init failed"; exit 2; }
+commit_all "$REPO" "v1"                          || { echo "fixture commit failed"; exit 2; }
+i=2
+while [ "$i" -le 5 ]; do
+	printf 'head\ntail\nrevision %s\n' "$i" > "$REPO/claude-setup/commands/deep2.md"
+	commit_all "$REPO" "v$i"                     || { echo "fixture commit failed"; exit 2; }
+	i=$((i + 1))
+done
+# content that was NEVER committed anywhere, under a path with 5 revisions
+printf 'head\nnot in any commit and not in the object store\n' > "$CFG/commands/deep2.md"
+HCAP=2
+before_d2=$(cat "$CFG/commands/deep2.md")
+out=$(run)
+cline=$(printf '%s\n' "$out" | grep 'no match in the last' || true)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+sline=$(printf '%s\n' "$out" | grep 'STALE - installed' || true)
+has   "it says how far it looked, in those words"              "no match in the last 2 revisions" "$cline"
+has   "...and names the file there"                            "commands/deep2.md"       "$cline"
+has   "...and says older path history went unread"             "older path history exists" "$cline"
+hasnt "⛔ it is NOT reported as a bare DIVERGED"                "commands/deep2.md"       "$dline"
+hasnt "nor as something --fix may refresh"                     "commands/deep2.md"       "$sline"
+out=$(run --fix)
+now_d2=$(cat "$CFG/commands/deep2.md")
+[ "$now_d2" = "$before_d2" ] \
+	&& ok "⛔ --fix left the unsearched-history file byte-identical" \
+	|| bad "⛔ --fix left the unsearched-history file byte-identical" "$(clip "$before_d2")" "$(clip "$now_d2")"
+# ⭐ CONTROL: with the cap raised past the whole history, the softening is gone
+# and the same file is the definite DIVERGED it always was.
+HCAP=50
+out=$(run)
+dline=$(printf '%s\n' "$out" | grep 'DIVERGED' || true)
+has   "⭐ with the cap raised it becomes a definite DIVERGED"   "commands/deep2.md"       "$dline"
+hasnt "...and the softened wording is gone"                    "no match in the last"    "$out"
 
 # ── 2+6: --fix repairs the stale and does not touch the diverged ─────────────
 echo

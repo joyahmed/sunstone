@@ -165,6 +165,27 @@ install_link() {
 # apart, the doctor would name files setup then refuses to touch, or worse.
 # awk rather than python3: the doctor already degrades to a warning when python3
 # is missing, and this predicate must never be the reason a conversion is skipped.
+#
+# ⛔ AND ONE THING THE DOCTOR NOW DOES THAT THIS DELIBERATELY DOES NOT. The
+# subset test can only recognise staleness that ADDED lines: when an upstream
+# commit REMOVES lines, an un-refreshed copy holds lines the repo no longer has
+# and reads exactly like a local edit. install-doctor.sh therefore wraps its copy
+# of this predicate in stale_copy(), which ALSO asks whether the installed
+# content equals any PAST VERSION of that repo path (blob ids, newest N
+# revisions). This function is left byte-identical to subset_of() there, and this
+# script is left WITHOUT the history test, on purpose:
+#   · the two act on opposite answers. A wrong "diverged" in the doctor is silent
+#     and permanent - its --fix skips the file forever and nobody is told. A
+#     wrong "diverged" HERE prints the ! line in install_link_safe below, with
+#     the diff to run, in front of the person running setup, and the copy keeps
+#     working: loud, and nothing was quietly withheld;
+#   · this script's answer REPLACES the file with a SYMLINK, so a wrong "stale"
+#     here destroys content the doctor would only have misreported. Coarse and
+#     conservative is the right bias for the side that converts.
+# What the cross-reference protects is unchanged: the two functions still agree
+# about what a subset IS. If the history test is ever wanted here too, it belongs
+# beside this function in BOTH files and both comments must stop saying they
+# differ.
 is_stale_subset() {
   [ -f "$1" ] && [ -f "$2" ] || return 1
   # ⛔ A repo file with ZERO lines would make awk's FNR==NR test true for the
