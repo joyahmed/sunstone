@@ -46,8 +46,18 @@ fi
 "$NODE" --version >/dev/null 2>&1 || { echo "no node interpreter that runs - set NODE=/path/to/node"; exit 2; }
 [ -f "$HOOK" ] || { echo "hook not found beside the test: $HOOK"; exit 2; }
 
-TMPROOT=$(mktemp -d "${TMPDIR:-/tmp}/agent-watch-test.XXXXXX") || {
+# ⚠️ NORMALISE THE TEMP PATH BEFORE ANYTHING COMPARES IT. On a BSD userland $TMPDIR
+# carries a trailing slash, and mktemp there hands the template back verbatim, so the
+# directory arrives as ".../T//agent-watch-test.XXXXXX". Node normalises every path it
+# builds, the "under the fake HOME" assertion below is a literal substring test, and
+# the two then disagree on a doubled slash - the battery goes red over a path detail
+# with nothing to do with the hook. Strip the trailing slash, then collapse whatever
+# doubling is left, so both sides spell the same directory the same way.
+_tmp="${TMPDIR:-/tmp}"; _tmp="${_tmp%/}"; [ -n "$_tmp" ] || _tmp=/tmp
+TMPROOT=$(mktemp -d "$_tmp/agent-watch-test.XXXXXX") || {
 	echo "could not create a temp dir - refusing to run against the real ~/.claude"; exit 2; }
+TMPROOT=$(printf '%s' "$TMPROOT" | sed 's|//*|/|g')
+[ -d "$TMPROOT" ] || { echo "temp dir vanished after normalising: $TMPROOT"; exit 2; }
 cleanup() { [ -n "${TMPROOT:-}" ] && [ -d "$TMPROOT" ] && rm -rf "$TMPROOT"; }
 trap cleanup EXIT INT TERM HUP
 
