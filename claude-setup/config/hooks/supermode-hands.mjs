@@ -8,6 +8,11 @@
 // "because it is small", and twenty of those later the window is full and the mode
 // has quietly become an ordinary session with extra ceremony.
 //
+// ⚠️ IT WATCHES TWO VERBS. Writing (below) and READING - see "THE SECOND VERB"
+// further down: an orchestrator that never edits a file can still burn its whole
+// window on `cat`, `grep` and `Read`, so read-shaped calls are counted and an
+// `Agent` spawn resets the count.
+//
 // ⚠️ IT WARNS. IT DOES NOT DENY. The reasoning is worth keeping, because it is
 // what makes this file safe to leave running:
 //
@@ -117,7 +122,159 @@ const note = (decision, reason, target) => {
       ` decision=${decision} reason=${reason} target=${target ? String(target).replace(/\s+/g, "_") : "-"}\n`);
   } catch { /* a read-only home must not break the guard */ }
 };
-const quiet = (reason, target) => { note("allow", reason, target); process.exit(0); };
+// ⛔ THE SECOND VERB. A write is not the only way an orchestrator does the work
+// itself, and it is not even the common one. This guard watched `Edit`, `Write`
+// and the Bash forms that write a file - and an orchestrator's window is emptied
+// by READING: `cat`, `sed -n`, `grep`, `find`, `Read`, `Glob`, and command output
+// generally. So a session could obey the contract perfectly, never edit one file,
+// and still spend its whole window on investigation an agent was supposed to pay
+// for. The guard was silent throughout, because none of it was a write.
+//
+// So there is a second counter here, and it is a NUDGE, not a block. Blocking
+// reads would make the mode unusable: the orchestrator legitimately reads the
+// queue, the handoff note, gate output and its agents' reports. Instead:
+//
+//   * every read-shaped tool call by the ORCHESTRATOR increments
+//     ~/.claude/ctx/<sid>.reads  ({"n":<count>,"band":<last nudged band>})
+//   * an `Agent` call - the observable, authoritative signal that this session is
+//     delegating - resets it to zero
+//   * crossing a band of READ_NUDGE_AT (default 8) with no intervening spawn emits
+//     ONE message naming the count and what to hand over, then stays quiet until
+//     the next band, exactly the way context-guard.mjs bands its 5% notices. A
+//     nudge that fires every call gets muted, and a muted nudge is worse than none.
+//
+// Why 8: reading the queue row, the handoff note and one gate output is three to
+// six calls, and that IS the orchestrator's own business. Eight is the first count
+// that cannot be explained by the orchestrator's own business, and repeating every
+// eight keeps the reminder proportional to the drift.
+//
+// ⚠️ Scope, honestly stated: `git` is never counted (the commit, the log and the
+// gate are the orchestrator's by contract), and neither is any `mcp__*` tool - the
+// sandboxed-analysis tools are the SANCTIONED way to look at bulk data, and
+// counting them would argue against the very habit this nudge wants. The Bash test
+// is a scan for a reader at command position over a stripped copy of the line:
+// cheap, and a false count costs one tick of a counter, never a block.
+const rnEnv = parseInt(process.env.SUPERMODE_READ_NUDGE ?? "", 10);
+const READ_NUDGE_AT = Number.isFinite(rnEnv) ? Math.max(0, rnEnv) : 8;   // 0 disables
+const READ_TOOLS = /^(Read|Glob|Grep|NotebookRead|WebFetch|WebSearch)$/;
+const SPAWN_TOOLS = /^(Agent|Task)$/;
+// Commands whose output lands in the window. Deliberately NOT here: git, the
+// package managers and test runners (the gate), and anything that mutates.
+const READERS = /^(cat|bat|head|tail|sed|awk|grep|egrep|fgrep|rg|ag|ack|find|fd|fdfind|ls|tree|wc|nl|jq|yq|less|more|od|xxd|strings|diff|column|readlink|realpath|du)$/;
+const WRAPPERS = /^(sudo|doas|env|command|time|nohup|stdbuf|xargs|nice|ionice)$/;
+
+// A reader at command position, on a copy with heredoc bodies, quoted spans and
+// `#` comments removed - so `git commit -m "fix; cat handling"` is a commit, not a
+// read, and a reader NAMED in a comment is prose, not a call.
+//
+// ⚠️ THE ORDER IS THE WHOLE TRICK, and a naive `s/#.*//` breaks both halves of it.
+// Quotes and heredoc bodies go first, so a `#` inside a string or a message body is
+// already gone before comments are considered - which is what keeps a commit
+// message a commit. Then the comment strip fires only on a `#` that STARTS a word
+// (line start, whitespace, or one of the operators that also separate commands),
+// because mid-word `#` is an ordinary character in a shell: `file#1` is a filename.
+// The separator is put back, since it is also what splits the segments below.
+const bashReads = (cmd) => {
+  const plain = String(cmd || "")
+    .replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?(?:\n[ \t]*\2[ \t]*(?:\n|$)|$)/g, " ")
+    .replace(/'[^']*'/g, " ").replace(/"(?:[^"\\]|\\[\s\S])*"/g, " ")
+    .replace(/(^|[\s;|&()])#[^\n]*/g, "$1 ");
+  for (const seg of plain.split(/(?:\|\||&&|[;|&\n()])+/)) {
+    const toks = seg.trim().split(/\s+/).filter(Boolean);
+    let k = 0;
+    while (k < toks.length && (WRAPPERS.test(toks[k]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[k]))) k++;
+    if (k >= toks.length) continue;
+    const name = toks[k].replace(/^.*\//, "");
+    if (!READERS.test(name)) continue;
+    // an in-place edit is a WRITE; the branch above owns it, this must not double-count
+    if (/^(sed|perl)$/.test(name) && toks.slice(k + 1).some((t) => /^-[a-zA-Z]*i/.test(t))) continue;
+    return true;
+  }
+  return false;
+};
+
+// Set once the caller is known to be the orchestrator (see the checks below), so
+// that supermode-off, the `.hands` escape and subagents count nothing.
+let counting = false;
+
+// Called on every quiet exit. Returns nothing; may write the one nudge itself,
+// synchronously (writeFileSync on fd 1 - process.exit can truncate an async
+// stdout write, and a half-written JSON object is a hook the harness cannot read).
+function readNudge() {
+  if (!counting || !READ_NUDGE_AT || !sid) return;
+  let f;
+  try { if (!existsSync(ctx)) return; f = resolve(ctx, `${sid}.reads`); } catch { return; }
+  const tool = String(input.tool_name || "");
+
+  // A spawn is the signal that this session is delegating. Reset, say nothing.
+  if (SPAWN_TOOLS.test(tool)) {
+    let seenSpawns = 0;
+    try {
+      const a = JSON.parse(readFileSync(resolve(ctx, `${sid}.agents.json`), "utf8") || "{}");
+      if (Number.isFinite(a.total)) seenSpawns = a.total | 0;
+    } catch { /* the watcher may not be running */ }
+    try { writeFileSync(f, JSON.stringify({ n: 0, band: 0, spawned: seenSpawns }) + "\n"); } catch { /* read-only home */ }
+    note("allow", "spawn-reset", tool);
+    return;
+  }
+  const isRead = READ_TOOLS.test(tool) || (tool === "Bash" && bashReads((input.tool_input || {}).command));
+  if (!isRead) return;
+
+  let n = 0, seen = 0, spawned = 0;
+  try {
+    if (existsSync(f)) {
+      const p = JSON.parse(readFileSync(f, "utf8") || "{}");
+      if (Number.isFinite(p.n)) n = p.n | 0;
+      if (Number.isFinite(p.band)) seen = p.band | 0;
+      if (Number.isFinite(p.spawned)) spawned = p.spawned | 0;
+    }
+  } catch { /* corrupt or unreadable: start over rather than throw */ }
+
+  // ⛔ THE SPAWN SIGNAL MUST NOT DEPEND ON THIS HOOK SEEING THE `Agent` TOOL.
+  // Whether it does is a settings question (the matcher), and a HALF-registered
+  // guard is worse than none: reads counted, spawns invisible, counter never reset,
+  // nudge firing forever until somebody mutes the hook. So there is a second,
+  // independent signal that needs no matcher at all - agent-watch.mjs runs on EVERY
+  // PostToolUse and writes <sid>.agents.json with `total`, the number of subagent
+  // transcripts this session has, which only ever goes up. `total` higher than the
+  // figure recorded at the last read = an agent was spawned since = delegating =
+  // reset. The `Agent` branch above is the direct signal; this is the one that
+  // holds when the direct one is not wired.
+  let nowSpawned = spawned;
+  try {
+    const a = JSON.parse(readFileSync(resolve(ctx, `${sid}.agents.json`), "utf8") || "{}");
+    if (Number.isFinite(a.total)) nowSpawned = a.total | 0;
+  } catch { /* no watcher, no file: fall back to the Agent branch alone */ }
+  if (nowSpawned > spawned) { n = 0; seen = 0; note("allow", "spawn-reset-observed", String(nowSpawned)); }
+
+  n += 1;
+  const band = Math.floor(n / READ_NUDGE_AT) * READ_NUDGE_AT;
+  const due = band >= READ_NUDGE_AT && band > seen;
+  try { writeFileSync(f, JSON.stringify({ n, band: due ? band : seen, spawned: nowSpawned }) + "\n"); } catch { /* still nudge */ }
+  if (!due) { note("allow", "read-counted", String(n)); return; }
+
+  note("nudge", "reads-nudge", String(n));
+  const msg =
+    `supermode delegation check (a warning - nothing is blocked, the tool call proceeds). ` +
+    `This session has made ${n} read-shaped tool calls (Read/Grep/Glob/WebFetch, or a Bash ` +
+    `\`cat\`/\`sed -n\`/\`grep\`/\`find\`) since it last spawned an Agent. Reading IS the work: ` +
+    `every byte of it lands in THIS window, and protecting this window is the whole reason the ` +
+    `mode exists - the Edit/Write guard cannot see any of it, so obeying that guard perfectly ` +
+    `still empties the session. Name the question you are investigating and hand it to an Agent ` +
+    `(Agent tool): give it the exact paths and the verified facts you already hold, and ask for ` +
+    `the CONCLUSION, not the files. \`node ~/.claude/hooks/agent-watch.mjs --report\` shows where ` +
+    `each agent stands. Reading the work queue, the handoff note, gate output and an agent's ` +
+    `report is your own business and needs no agent; everything else does. This counter resets the ` +
+    `moment you spawn one, and this notice repeats once per ${READ_NUDGE_AT} further reads.`;
+  try {
+    writeFileSync(1, JSON.stringify({
+      systemMessage: `supermode: ${n} read-shaped calls with no Agent spawned - the orchestrator is investigating instead of delegating (warning only).`,
+      hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: msg },
+    }) + "\n");
+  } catch { /* nothing to be done about a closed stdout */ }
+}
+
+const quiet = (reason, target) => { note("allow", reason, target); readNudge(); process.exit(0); };
 
 const on = process.env.SUPERMODE === "1" || (sid && existsSync(resolve(ctx, `${sid}.sm`)));
 if (!on) quiet("supermode-off");
@@ -137,6 +294,19 @@ if (isSubagent) quiet("subagent");
 const transcript = String(input.transcript_path || "").replace(/\\/g, "/");
 const parentTranscript = sid && transcript.endsWith(`/${sid}.jsonl`) && !transcript.includes("/subagents/");
 if (!parentTranscript) quiet("not-parent-transcript");
+
+// Past this line the caller is the orchestrator itself, so its reads are the reads
+// the nudge above is counting.
+counting = true;
+// ⛔ ...but only for a session that EXISTS. The read counter is the one piece of
+// STATE this guard keeps, and state keyed by a session id is only safe while that
+// id names a live session. An invocation whose transcript is not on disk is a
+// replay, a probe or a harness reusing one fixed id - and giving it a counter lets
+// one run's band survive into the next run under that id, where the nudge then
+// fires on reads the session never made: a warning on a call that deserved silence,
+// which is the expensive direction for a guard nobody is watching. Everything else
+// here is stateless and judges such a call identically; only the counting stops.
+try { if (!existsSync(transcript)) counting = false; } catch { counting = false; }
 
 const tool = String(input.tool_name || "");
 const args = input.tool_input || {};
