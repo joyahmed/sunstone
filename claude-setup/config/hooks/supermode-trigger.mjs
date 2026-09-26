@@ -170,7 +170,10 @@ const saidOff = /\b(?:stop|end|exit|leave|quit|off)\s+supermode\b/i.test(typed) 
 
 const CONTRACT =
   "SUPERMODE IS ON. You are the ORCHESTRATOR, not the worker. Your own hands do only: " +
-  "read the queue/handoff, decide the slice, SPAWN an Agent for it, run the gate, commit, " +
+  "read the last handoff for this box and repo FIRST (the newest session-<date>.md note), " +
+  "and the queue only to confirm placement or when that handoff is missing or stale - the " +
+  "handoff is compact and current, the queue is a cross-machine board that spends your window " +
+  "on other boxes' work. Then: decide the slice, SPAWN an Agent for it, run the gate, commit, " +
   "write the handoff, say it out loud. Every unit of real work - the searching, the reading, " +
   "the editing - goes to an Agent tool subagent, because their context is spent instead of " +
   "yours and that is the whole point of the mode. Watch them: " +

@@ -13,8 +13,13 @@ on from it*.
 This is the rule the whole mode rests on, and the one that slips first. **Your own hands
 do only these six things:**
 
-1. read the queue and the last handoff, 2. decide the next slice, 3. **spawn an agent for
-it**, 4. run the gate, 5. commit, 6. write the handoff and say it out loud.
+1. read the last handoff for this box and repo — the newest `session-<date>[-<box>].md`
+where `/handoff` writes it, `<repo>/docs/ai-memory/` in a private repo or the memory
+repo's `claude-setup/memory/<repo>/` for a public one — **then** the queue, only to
+confirm placement or when the handoff is missing or stale, because the handoff is
+compact, current and this box's while the queue is a cross-machine board that spends the
+window on other boxes' work, 2. decide the next slice, 3. **spawn an agent for it**,
+4. run the gate, 5. commit, 6. write the handoff and say it out loud.
 
 Everything else - the searching, the reading, the editing, the debugging - goes to an
 **Agent tool** subagent. Not because you cannot do it, but because an agent's context is
