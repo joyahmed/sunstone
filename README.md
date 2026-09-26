@@ -188,7 +188,7 @@ header comment carries the same reasoning at the point of use.
 | `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, runs the repo's optional `claude-setup/session-start.d/*` scripts, then injects `MEMORY_FILE` - plus whatever those scripts printed - as context. Every network call and every script is time-bounded. See [session-start.d](claude-setup/SETUP.md#session-startd-scripts-the-memory-repo-runs-on-every-machine). |
 | `ai-memory-commit` | Claude Code **SessionEnd** | Commits anything changed under `MEMORY_DIR`, staged **by path** and nothing else, with `--no-verify`; then fires a detached, time-bounded push and returns without waiting for it. Refuses to run at all mid-merge, mid-cherry-pick, mid-rebase or on a detached HEAD. |
 | `memory-doctor-notice` | Claude Code **SessionStart** | Injects a short notice from `memory-doctor --brief` - a summary line plus up to three WARN lines - at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
-| `session-bus-notice` | Claude Code **SessionStart** | Off until `BUS_DIR` is set. Announces, once, every other machine's outbox in the memory repo that has changed since it was last announced - see [The session bus](#the-session-bus). |
+| `session-bus-notice` | Claude Code **SessionStart** | Always injects this session's own address, `<box>/<repo>`, and the rule that a cross-session message opens with `FROM <box>/<repo>`. Then, once `BUS_DIR` is set: announces every other machine's outbox that changed since it was last announced, and records this session in `BUS_DIR/sessions-<side>.md` so a box that appears in no peer listing is still discoverable - see [The session bus](#the-session-bus). |
 | `pre-commit` | git, via global `core.hooksPath` | In `MEMORY_REPOS`, refuses a commit that stages paths both inside and outside `MEMORY_DIR`. Stands down entirely while git is mid-merge, cherry-pick, revert or rebase. Override: `ALLOW_MIXED_COMMIT=1 git commit`. |
 | `pre-push` | git, via global `core.hooksPath` | In `GUARDED_REPOS`, refuses any push that is not a fast-forward, any branch deletion, and any push whose remote tip is not in the local object store at all. Override: `ALLOW_FORCE_PUSH=1 git push`. |
 
@@ -313,6 +313,7 @@ set it up; two `sunstone.conf` keys:
 |---|---|---|
 | `BUS_DIR` | unset = **off** | The bus directory, relative to the memory repo (`claude-setup/bus`, say). |
 | `BUS_SIDE` | detected | This machine's side name. Detection: `windows` on Windows, `mac` on macOS, `wsl` when `/proc/version` mentions Microsoft, else `linux`. Set it when two machines would detect the same name. |
+| `SESSION_REGISTRY_DAYS` | `3` | How long a row stays in `BUS_DIR/sessions-<side>.md` before the next write prunes it. At most 100 rows are kept whatever this says. |
 
 **The protocol.** `BUS_DIR/outbox-<side>.md`, one writer per file: a machine writes **only its own**
 outbox, newest entry at the top under a `## <stamp> - <subject>` heading, then commits that file
@@ -346,6 +347,40 @@ failure. Claude Code may start SessionStart hooks together, so a message that ar
 same pull can be announced one session late; nothing is lost, because the comparison is against
 what is on disk. The `.seen` files are machine-local by design - each machine keeps its own
 record of what it has been told.
+
+### A session's address is `<box>/<repo>`
+
+⛔ **A session's title is not an address.** A peer choosing who to message reads a session listing,
+and the only per-row identity it offers is the **display name** - which, when nothing sets it, is
+derived from the session's first task. A session whose first task was "contact the other box" is
+therefore listed under a title naming a box it is not on: the listing asserts the opposite of the
+truth, and messages follow it. That happened for a whole day, and a session cannot rename itself
+from inside, so the name has to be set where a session is created.
+
+Three parts, and each is useless without the others:
+
+1. **The launcher names the session.** `bin/supermode` passes `--name "<box>/<repo>"`. `<box>` is the
+   first non-empty line of `~/.claude/hooks/claude-name.txt` (this machine's name), else
+   `~/.claude/bus-side`, else the short hostname; `<repo>` is the basename of the work tree, else of
+   the current directory. An empty part is dropped, so a name never begins or ends with `/`, and an
+   explicit `--name`/`-n` from the caller is never clobbered. A session started by hand, without the
+   launcher, is still unnamed - that is the gap this cannot close.
+2. **The hook tells the session its own address,** so its `FROM` line is not guesswork. `<box>/<repo>`
+   is the smallest thing that identifies one session: one box runs several at once and they all read
+   the same name file, so the box alone cannot route a message.
+3. **The registry says a session exists at all,** because naming only helps a session that appears
+   somewhere. `BUS_DIR/sessions-<side>.md` is a table of `started · box · repo · session id · display
+   name`, rewritten at every SessionStart: one row per session id, updated in place, so a second start
+   changes nothing. One file per side, like the outboxes, because two boxes rewriting one shared file
+   would conflict on every pull. Rows older than `SESSION_REGISTRY_DAYS` go on the next write and at
+   most 100 are kept. ⚠️ The hook never commits it - the SessionEnd memory hook already stages
+   `BUS_DIR` by path.
+
+⚠️ **unverified:** whether the harness stores and displays a `/` in a session name unchanged has not
+been observed - nothing on disk records a session's display name, and the status line never receives
+one (its payload carries the model's display name and the session id, nothing else). The registry
+therefore records the **intended** address in its own columns rather than trusting a title, and the
+hook says so when a name it *can* see disagrees with the address.
 
 ## Supermode and supercode
 
@@ -403,7 +438,7 @@ sunstone/
         │   ├── ai-memory-sync.sh / .js       # SessionStart (sh on POSIX, js on Windows)
         │   ├── ai-memory-commit.sh / .js     # SessionEnd
         │   ├── memory-doctor-notice.sh / .js # SessionStart notice (sh on POSIX, js on Windows)
-        │   ├── session-bus-notice.js         # SessionStart: another machine's outbox changed (BUS_DIR)
+        │   ├── session-bus-notice.js         # SessionStart: this session's address, another machine's outbox (BUS_DIR), the session registry
         │   ├── graphify-nudge.mjs            # PreToolUse: the graphify hint; no python3 needed
         │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
         │   ├── ctx-gauge.mjs                 # supermode: fronts your status line, writes the %

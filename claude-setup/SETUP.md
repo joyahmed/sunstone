@@ -564,6 +564,7 @@ unguarded by word-splitting.
 | `QUEUE_NOW_MAX` | `3` | `memory-doctor` only: the rows the NOW table may hold before the doctor calls it a wish list. |
 | `BUS_DIR` | unset (bus off) | `session-bus-notice.js`: the session-bus directory, relative to the memory repo, holding one `outbox-<side>.md` per machine - see [The session bus](../README.md#the-session-bus). |
 | `BUS_SIDE` | detected: `windows`, `mac`, `wsl` or `linux` | `session-bus-notice.js`: this machine's side name, i.e. which outbox is its own and is never announced. |
+| `SESSION_REGISTRY_DAYS` | `3` | `session-bus-notice.js`: how many days a row survives in `BUS_DIR/sessions-<side>.md`, the registry of sessions started on this side. Pruning happens on the next write; a hard ceiling of 100 rows applies whatever this says. |
 | `LINK_CLAUDE_MD` | unset (copies) | `setup.sh` only: `1` installs `~/CLAUDE.md` and `~/.claude/CLAUDE.md` as symlinks to their repo sources instead of copies; an existing differing copy is backed up first. `setup.ps1` ignores it and says so. See [Config drift](../README.md#config-drift). |
 
 Repo names are the basename of `git remote get-url origin` with `.git` stripped. The URL is

@@ -23,6 +23,81 @@ if [ ! -f "$settings" ]; then
 fi
 command -v claude >/dev/null 2>&1 || { echo "supermode: claude is not on PATH" >&2; exit 1; }
 
+# --- the session's display name: <box>/<repo> --------------------------------
+#
+# ⛔ WHY THIS IS HERE AND NOT SOMEWHERE CLEVERER. A peer that wants to send this
+# session a message picks the row out of a session listing, and that row is
+# titled with the session's DISPLAY NAME - which, unnamed, is derived from the
+# first task. A session whose first task was "contact the other box" is listed
+# under a title naming that other box, so the listing asserts the OPPOSITE of
+# where the row leads. Five messages went to the wrong box on one day that way.
+# A session cannot rename itself from inside, and asking a peer to retitle
+# itself for someone else's routing is not a peer's job. So the name is set at
+# LAUNCH, which is the only place that can.
+#
+# <box>/<repo> is the smallest thing that identifies one session: one box runs
+# several sessions at once, so the box name alone is not an address, and the
+# repo alone repeats on every box.
+#   box   first non-empty line of ~/.claude/hooks/claude-name.txt (this
+#         machine's name), else ~/.claude/bus-side, else the short hostname.
+#         ⛔ FIRST LINE, trimmed - never the whole file joined: a two-line file
+#         welded into one word is a name no peer can type.
+#   repo  basename of `git rev-parse --show-toplevel`, else of the current
+#         directory when the launch is outside a work tree.
+# Either part may come out empty; the address then drops that part rather than
+# shipping an empty segment, so no name ever begins or ends with "/".
+#
+# ⛔ THE SEPARATOR IS A SLASH AND STAYS A SLASH. It is the form the user asked
+# for, it is the form the FROM line in message bodies already uses, and a
+# launcher quietly shipping "box-repo" or "box:repo" instead would leave two
+# spellings of one address in circulation - which is how a convention rots. Do
+# not "tidy" it.
+# ⚠️ unverified: whether a slash survives the harness's own storage and display
+# of a session name has NOT been observed - nothing on this machine records a
+# session's display name, so the only way to see it is to type one and look. If a
+# listing is ever seen showing only the part after the slash, the box must come
+# FIRST in whatever replaces it, because the box is the half a sender cannot
+# infer. The box is already first.
+# ⚠️ The status line cannot confirm this flag either way: its payload carries
+# only the model's display name and the session id, so what it paints is built
+# from the same box-name file and repo, never from this value.
+#
+# ⚠️ An explicit --name/-n from the caller WINS and is not touched: a caller
+# that named the session meant it.
+first_line() {
+  [ -f "$1" ] || return 0
+  awk 'NR<=20 { gsub(/\r/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") { print; exit } }' "$1" 2>/dev/null
+}
+sm_name=0
+for arg in "$@"; do
+  case "$arg" in -n|--name|--name=*) sm_name=1 ;; esac
+done
+if [ "$sm_name" = "0" ]; then
+  box=$(first_line "$cfg/hooks/claude-name.txt")
+  [ -n "$box" ] || box=$(first_line "$cfg/bus-side")
+  [ -n "$box" ] || box=$( (hostname 2>/dev/null || uname -n 2>/dev/null || true) | head -n1 | cut -d. -f1 )
+  top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  [ -n "$top" ] || top=$(pwd)
+  repo=$(basename "$top" 2>/dev/null || true)
+  # Keep both parts to characters a person can retype from a listing; this also
+  # turns basename "/" and a stray newline into the empty string, which the
+  # assembly below then drops.
+  box=$(printf '%s' "$box" | tr -cd 'A-Za-z0-9._-')
+  repo=$(printf '%s' "$repo" | tr -cd 'A-Za-z0-9._-')
+  if [ -n "$box" ] && [ -n "$repo" ]; then addr="$box/$repo"
+  elif [ -n "$box" ]; then addr="$box"
+  else addr="$repo"
+  fi
+  # Placed BEFORE the caller's arguments so that even a --name form this script
+  # failed to recognise still wins by coming later on the command line.
+  # ⚠️ An `if`, not `[ … ] && set --`: under `set -e` a trailing && list that
+  # comes out false is an error that would kill the launch when no address could
+  # be derived - the one case that must still start a session.
+  if [ -n "$addr" ]; then
+    set -- --name "$addr" "$@"
+  fi
+fi
+
 # Remote Control on by default. An unattended session is the one most worth being
 # reachable: it runs for hours with nobody watching, and without this its peers
 # cannot ask it what it is holding, so the answer has to come through the person
