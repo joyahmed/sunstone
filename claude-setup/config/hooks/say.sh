@@ -4,12 +4,35 @@
 #
 #   bash ~/.claude/hooks/say.sh "Slice 3 is done. Taking up the README."
 #
-# macOS  -> `say`, best installed voice (premium/enhanced ones appear after a download
-#           in System Settings > Accessibility > Spoken Content > Manage Voices).
-# WSL    -> powershell.exe running say.ps1 beside this file (Windows neural voice).
-# Linux  -> Piper (~/.local/share/piper, PIPER_VOICE) if installed, else spd-say or
-#           espeak; otherwise silent.
+# THE LADDER, in order, first rung that speaks wins:
+#   1. edge-tts, when a neural voice is CONFIGURED (see below) and the toolchain is
+#      present. This rung exists because some good voices cannot be reached by any
+#      other engine on the machine - a Narrator-locked voice is one of those - so
+#      without it a configured voice can be silently ignored.
+#   2. the platform's own speech:
+#      macOS  -> `say`, the configured voice if installed, else the best quality
+#                tier present (premium/enhanced voices appear after a download in
+#                System Settings > Accessibility > Spoken Content > Manage Voices).
+#      Windows (Git Bash) and WSL -> powershell.exe running say.ps1 beside this file.
+#      Linux  -> Piper (~/.local/share/piper, PIPER_VOICE) if installed, else
+#                spd-say or espeak.
+#   3. nothing speaks -> one line in the log saying exactly that.
 # SAY_OFF=1 (or a file ~/.claude/hooks/say-off) silences it everywhere.
+# SAY_NO_EDGE=1 skips rung 1; the background fallback below sets it on itself.
+#
+# ⛔ WHICH VOICE IS CONFIGURATION, NEVER CODE. No voice name is written in this file
+# or in say.ps1, and that is a rule. A voice is a per-machine, per-person setting:
+# a name hardcoded in a shared script is wrong on every machine that does not have
+# it installed, and worse, it fails quietly - the match misses, some fallback picks
+# a voice nobody chose, and the file still looks like it is expressing a preference.
+#   $CLAUDE_VOICE, else one line in $HOME/.claude/hooks/claude-voice.txt
+# read exactly the way chime.sh and voice-bake.sh already read it - one mechanism,
+# not a third invention. Empty means "whatever this platform gives", which is the
+# setting the person already made in their OS, and that is a correct answer.
+# ⚠️ $HOME differs per side (a WSL /home/<user> vs a Windows C:\Users\<user>), so
+# each side's say.sh resolves its OWN side's file. EDGE_TTS_VOICE and PIPER_VOICE
+# stay separate and still win for their own engine: a neural model id is a different
+# kind of string from a native voice name, so one variable cannot serve both.
 #
 # ⛔ WHY THERE IS A LOG, found on 2026-09-26: every branch below backgrounds its
 # speech process and then exits 0, discarding stdout and stderr. AN EXIT CODE THAT
@@ -108,13 +131,135 @@ say_log() {
 [ "${SAY_OFF:-0}" = "1" ] && { say_log 'backend=none outcome=muted reason=SAY_OFF=1 nothing was spoken'; exit 0; }
 [ -e "$HOME/.claude/hooks/say-off" ] && { say_log 'backend=none outcome=muted reason=say-off file present, nothing was spoken'; exit 0; }
 
+# ─────────────────────────────── the configured voice ───────────────────────────
+# Two lines, deliberately identical to chime.sh's and voice-bake.sh's: $CLAUDE_VOICE
+# wins, else the one line in claude-voice.txt beside the other name files. Exported,
+# so every branch below and say.ps1 inherit it with no further plumbing.
+# ⛔ Never written from here - the file is the user's.
+say_voice="${CLAUDE_VOICE:-}"
+[ -n "$say_voice" ] || say_voice="$(cat "$HOME/.claude/hooks/claude-voice.txt" 2>/dev/null | tr -d '\r\n')"
+if [ -n "$say_voice" ]; then CLAUDE_VOICE="$say_voice"; export CLAUDE_VOICE; fi
+
+# ── helpers shared by the edge-tts rung ────────────────────────────────────────
+# `timeout` is not on a stock macOS, and a missing timeout must not cost the word.
+say_t() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift; "$@"; fi; }
+
+# A Windows path for a Unix one, when a translator exists (WSL: wslpath, Git Bash:
+# cygpath). Same two-command shape voice-bake.sh uses.
+say_win_path() {
+  if command -v wslpath >/dev/null 2>&1; then wslpath -w "$1" 2>/dev/null
+  elif command -v cygpath >/dev/null 2>&1; then cygpath -w "$1" 2>/dev/null
+  else printf '%s' "$1"; fi
+}
+
+# edge-tts writes mp3 only, and every player below wants PCM wav.
+say_to_wav() {
+  if command -v ffmpeg >/dev/null 2>&1; then
+    say_t 25 ffmpeg -nostdin -loglevel error -y -i "$1" -ar 22050 -ac 1 -c:a pcm_s16le "$2" >/dev/null 2>&1
+  elif command -v ffmpeg.exe >/dev/null 2>&1; then
+    say_t 40 ffmpeg.exe -nostdin -loglevel error -y -i "$(say_win_path "$1")" -ar 22050 -ac 1 -c:a pcm_s16le "$(say_win_path "$2")" >/dev/null 2>&1
+  elif command -v sox >/dev/null 2>&1; then
+    say_t 25 sox "$1" -r 22050 -c 1 -b 16 "$2" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+# Three ways in, in the order voice-bake.sh established them.
+# ⚠️ On the Windows side the interpreter is python.exe and NEVER python3: that name
+# there is a Microsoft Store alias stub which exits without running anything.
+say_edge_synth() {   # <voice> <text> <mp3 out>
+  if command -v edge-tts >/dev/null 2>&1; then
+    say_t 30 edge-tts --voice "$1" --text "$2" --write-media "$3" >/dev/null 2>&1 && [ -s "$3" ] && return 0
+  fi
+  if command -v python3 >/dev/null 2>&1 && say_t 20 python3 -c 'import edge_tts' >/dev/null 2>&1; then
+    say_t 30 python3 -m edge_tts --voice "$1" --text "$2" --write-media "$3" >/dev/null 2>&1 && [ -s "$3" ] && return 0
+  fi
+  if command -v python.exe >/dev/null 2>&1 && say_t 25 python.exe -c 'import edge_tts' >/dev/null 2>&1; then
+    say_t 40 python.exe -m edge_tts --voice "$1" --text "$2" \
+      --write-media "$(say_win_path "$3")" >/dev/null 2>&1 && [ -s "$3" ] && return 0
+  fi
+  return 1
+}
+
+# ⭐ PlaySync() given a PATH can return 0 without a sound having come out; an opened
+# stream is the form measured audible here, so the Windows player uses .Stream.
+say_player=none
+say_play_wav() {   # <wav>
+  say_player=none
+  if command -v afplay >/dev/null 2>&1; then say_player=afplay; afplay "$1" >/dev/null 2>&1; return $?; fi
+  for _p in pw-play paplay aplay; do
+    command -v "$_p" >/dev/null 2>&1 || continue
+    say_player="$_p"
+    "$_p" "$1" >/dev/null 2>&1 && return 0
+  done
+  if command -v powershell.exe >/dev/null 2>&1; then
+    say_player=soundplayer
+    _w="$(say_win_path "$1")"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+      "\$p = New-Object Media.SoundPlayer; \$p.Stream = [IO.File]::OpenRead('$_w'); \$p.PlaySync(); \$p.Stream.Close()" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
+# ── Rung 1: edge-tts ───────────────────────────────────────────────────────────
+# Only for a value SHAPED like a neural id (<locale>-<Name>Neural), which is the
+# same gate voice-bake.sh applies: a native voice name means nothing to edge-tts,
+# which 400s on it, so a value of the other kind is left for the rungs that speak it.
+# ⚠️ EDGE_TTS_VOICE is the explicit escape hatch and wins, exactly as it does there.
+# The whole attempt is inside a background subshell - the caller is freed by one fork
+# as before - and on failure that subshell re-runs this script with the rung off, so
+# the platform ladder still gets its turn without a line of it being duplicated here.
+say_edge_want="${EDGE_TTS_VOICE:-$say_voice}"
+case "${SAY_NO_EDGE:-0}:$say_edge_want" in
+  1:*) ;;
+  *:*-*Neural)
+    (
+      mp3="${TMPDIR:-/tmp}/claude-say-$$.mp3"; wav="${TMPDIR:-/tmp}/claude-say-$$.wav"
+      stage=synth; rc=1
+      if say_edge_synth "$say_edge_want" "$text" "$mp3"; then
+        stage=convert
+        if say_to_wav "$mp3" "$wav" && [ -s "$wav" ]; then
+          stage=play
+          say_play_wav "$wav"; rc=$?
+        fi
+      fi
+      rm -f "$mp3" "$wav" 2>/dev/null
+      if [ "$rc" -eq 0 ]; then
+        say_log "backend=edge-tts voice=$(say_flatten "$say_edge_want") stage=$stage player=$say_player rc=0"
+      else
+        say_log "backend=edge-tts voice=$(say_flatten "$say_edge_want") stage=$stage player=$say_player rc=$rc, falling through to the platform ladder"
+        # ⛔ Not a duplicated ladder: the same script, one rung lower.
+        # ⚠️ bash, not sh: the helpers above use ${var//} and `local`, so a re-exec
+        # under dash would break the script it is trying to give a second chance.
+        if [ -r "$0" ]; then
+          if command -v bash >/dev/null 2>&1; then SAY_NO_EDGE=1 exec bash "$0" "$text"
+          else SAY_NO_EDGE=1 exec sh "$0" "$text"; fi
+        fi
+      fi
+    ) >/dev/null 2>&1 &
+    exit 0
+    ;;
+esac
+
 if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+  # ⛔ This used to be a list of ten voice NAMES written here, which is the defect
+  # this file now refuses: on a Mac without those downloads it matched nothing and
+  # the choice silently became `say`'s default while looking deliberate. What is
+  # left is (a) the configured voice and (b) a QUALITY TIER, which is a property of
+  # the install rather than a name - premium and enhanced voices only exist on a box
+  # where someone downloaded one, so their presence IS the preference.
   voice=""
   voices="$(say -v '?' 2>/dev/null)"
-  for v in "Zoe (Premium)" "Ava (Premium)" "Samantha (Enhanced)" "Allison (Enhanced)" \
-           "Zoe (Enhanced)" "Ava (Enhanced)" "Karen (Premium)" "Karen (Enhanced)" "Karen" "Samantha"; do
-    if printf '%s\n' "$voices" | grep -q "^$v "; then voice="$v"; break; fi
-  done
+  if [ -n "$say_voice" ] && printf '%s\n' "$voices" | grep -q "^$say_voice "; then voice="$say_voice"; fi
+  if [ -z "$voice" ]; then
+    for tier in '(Premium)' '(Enhanced)'; do
+      voice="$(printf '%s\n' "$voices" | grep -F "$tier" | head -1 | awk -F'  +' '{print $1}')"
+      [ -n "$voice" ] && break
+    done
+  fi
+  # Still empty -> no -v flag at all, i.e. the voice chosen in System Settings.
   # The caller is freed here; the subshell stays behind to wait for `say` and write
   # the verdict. stdout is still discarded - only stderr is worth keeping - so the
   # latency the caller sees is unchanged: one fork, exactly as before.
@@ -146,6 +291,10 @@ if grep -qi microsoft /proc/version 2>/dev/null && command -v powershell.exe >/d
   ps1="$HOME/.claude/hooks/say.ps1"
   [ -r "$ps1" ] || { say_log 'backend=none outcome=unavailable reason=wsl but say.ps1 is missing or unreadable, nothing was spoken'; exit 0; }
   win="$(wslpath -w "$ps1" 2>/dev/null)" || { say_log 'backend=none outcome=unavailable reason=wslpath could not translate say.ps1, nothing was spoken'; exit 0; }
+  # An exported variable does NOT cross into a Windows process on its own; WSLENV is
+  # the only route, and it is appended to rather than replaced so anything already
+  # being forwarded keeps going. Same mechanism chime.sh uses for the same reason.
+  if [ -n "$say_voice" ]; then WSLENV="${WSLENV:+$WSLENV:}CLAUDE_VOICE"; export WSLENV; fi
   # ⚠️ rc=0 here means powershell.exe exited cleanly, which say.ps1 does even when
   # its WinRT voice fails and the SAPI fallback carries the sentence. Which of the
   # two actually spoke is say.ps1's own record: %TEMP%\claude-say-errors.log.
@@ -157,13 +306,18 @@ if grep -qi microsoft /proc/version 2>/dev/null && command -v powershell.exe >/d
 fi
 
 # Native Linux: Piper neural TTS when it is installed under ~/.local/share/piper
-# (binary at piper/piper, models in voices/). PIPER_VOICE names the model; default
-# en_US-amy-medium, else the first model present. Same layout chime.sh uses, so the
+# (binary at piper/piper, models in voices/). Same layout chime.sh uses, so the
 # slice sentence and the chime speak in one voice.
+# Which model: PIPER_VOICE, else $CLAUDE_VOICE when a model of that name is actually
+# installed, else the first model present. ⛔ No model id is named here - a default
+# written into this file is a voice nobody chose on every box that has a different
+# model installed, which is the defect this file exists without.
 piper="$HOME/.local/share/piper/piper/piper"
 vdir="$HOME/.local/share/piper/voices"
-voice="$vdir/${PIPER_VOICE:-en_US-amy-medium}.onnx"
-if [ ! -r "$voice" ]; then
+voice=""
+if [ -n "${PIPER_VOICE:-}" ]; then voice="$vdir/$PIPER_VOICE.onnx"
+elif [ -n "$say_voice" ] && [ -r "$vdir/$say_voice.onnx" ]; then voice="$vdir/$say_voice.onnx"; fi
+if [ -z "$voice" ] || [ ! -r "$voice" ]; then
   for f in "$vdir"/*.onnx; do [ -r "$f" ] && { voice="$f"; break; }; done
 fi
 if [ -x "$piper" ] && [ -r "$voice" ]; then
@@ -199,6 +353,6 @@ else
   # ⛔ The line this whole change exists for. Reaching here means the machine has no
   # speech at all; before, it exited 0 like every healthy machine and left nobody a
   # way to find that out.
-  say_log 'backend=none outcome=no backend found (no macOS say, no WSL powershell, no piper, no spd-say, no espeak), nothing was spoken'
+  say_log 'backend=none outcome=no backend found (no edge-tts for a configured neural voice, no macOS say, no WSL powershell, no piper, no spd-say, no espeak), nothing was spoken'
 fi
 exit 0
