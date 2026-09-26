@@ -276,6 +276,24 @@ one per direction:
 |---|---|---|
 | `LINK_CLAUDE_MD` | unset = copies | `1`: `setup.sh` symlinks `~/CLAUDE.md` and `~/.claude/CLAUDE.md` to the repo files. POSIX only. |
 | `LINK_HOOKS` | unset = copies | `1`: `setup.sh` symlinks `~/.claude/hooks/*` at this repo's `claude-setup/config/hooks/*`. A `git pull` here then updates every hook on that machine, instead of the fix waiting for somebody to re-run setup on each box. POSIX only; `setup.ps1` ignores it. |
+| `LINK_COMMANDS` | unset = copies | `1`: `setup.sh` symlinks `~/.claude/commands/*.md` at their repo sources, so a `git pull` updates the slash commands. POSIX only. A live file that has DIVERGED from the repo copy is kept and named, never replaced. |
+| `LINK_SKILLS` | unset = copies | `1`: same for `~/.claude/skills/<name>` (the whole skill directory becomes one symlink). POSIX only, same divergence rule. |
+
+`LINK_HOOKS` exists because a fix that reaches every checkout and no live machine is invisible;
+`LINK_COMMANDS` and `LINK_SKILLS` exist because commands and skills had the same hole and nobody
+had noticed. Measured on one box: three of six installed commands were strict subsets of their repo
+copy, with zero lines of their own - never refreshed since the missing sections landed, one of which
+was a rule whose absence makes an unattended run fail its own commit every slice.
+
+**The keys are the optional half. The half that is not optional is the reporting:**
+`claude-setup/scripts/install-doctor.sh` compares every shipped command and skill against what is
+installed and separates two answers - **stale** (every line of the live file is in the repo copy and
+the repo copy has more: a copy nobody touched, only failed to refresh; `--fix` refreshes it) from
+**diverged** (the live file has lines of its own, so it may be a deliberate local edit: reported and
+left alone, never repaired, never backed-up-and-replaced). A symlinked file tracks the repo and is
+not reported at all. `claude-setup/config/hooks/tests/install-doctor-staleness.test.sh` holds the
+negative controls: a deliberately stale fixture the detector must name, and a hand-edited one
+`--fix` must leave byte-for-byte alone.
 
 ## The session bus
 

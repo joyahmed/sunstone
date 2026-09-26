@@ -151,6 +151,109 @@ install_link() {
   echo "  linked: $dst → $src"
 }
 
+# is_stale_subset <installed> <repo> - true when <installed> is a STRICT SUBSET
+# of <repo>: every line of <installed> also appears in <repo>, and <repo> has at
+# least one line <installed> lacks. That is precisely what a copy installed once
+# and never refreshed looks like, and it is the only shape that is safe to
+# replace without asking anybody - a file somebody EDITED has lines of its own,
+# which makes this false. Lines are compared as a set, not in order, so a
+# reordered file counts as edited rather than stale: the conservative answer.
+#
+# ⚠️ The same predicate is implemented as subset_of() in
+# claude-setup/scripts/install-doctor.sh. The two must agree, because the doctor
+# is what REPORTS a file as stale and this is what CONVERTS it; if they drifted
+# apart, the doctor would name files setup then refuses to touch, or worse.
+# awk rather than python3: the doctor already degrades to a warning when python3
+# is missing, and this predicate must never be the reason a conversion is skipped.
+is_stale_subset() {
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  # ⛔ A repo file with ZERO lines would make awk's FNR==NR test true for the
+  # FIRST record of the second file too (FNR and NR are both 1 when the first
+  # file had no records), so the installed file's lines would be loaded as the
+  # repo's and every comparison below would be against itself. Refuse here.
+  [ -s "$2" ] || return 1
+  awk '
+    FNR==NR { repo[$0]=1; next }
+    { inst[$0]=1; if (!($0 in repo)) extra++ }
+    END {
+      for (l in repo) if (!(l in inst)) missing++
+      exit (extra+0 == 0 && missing+0 > 0) ? 0 : 1
+    }
+  ' "$2" "$1"
+}
+
+# install_link_safe <src> <dst> - install_link that NEVER discards something a
+# person may have written. <dst> becomes the link when it is absent, when it is
+# already that link, when it is byte-identical to <src>, or when it is a stale
+# subset of <src> (above). Anything else has DIVERGED: it is left exactly where
+# it is and named on stdout, and the person decides.
+#
+# Used for commands and skills rather than install_link, because those are the
+# files people most often tweak in place - unlike a hook or a CLAUDE.md, a slash
+# command is a text file that invites a local edit. install_link's own answer
+# (back it up, then replace it) is right for hooks and wrong here: a backup in
+# ~/.claude/backups is not something anybody reads again.
+install_link_safe() {
+  local src="$1" dst="$2"
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+    if ! cmp -s "$src" "$dst" && ! is_stale_subset "$dst" "$src"; then
+      echo -e "  ${YELLOW}! kept $dst as it is: it differs from the repo copy by more than being out of date, so it was NOT replaced by a link.${NC}"
+      echo    "    diff it against $src and delete it if the local changes are not wanted."
+      return 0
+    fi
+  fi
+  install_link "$src" "$dst"
+}
+
+# skill_tree_stale <installed-dir> <repo-dir> - the tree twin of
+# is_stale_subset, and the question is the same one: is this only an old copy of
+# ours? True when every regular file under <installed-dir> is either identical
+# to its counterpart in <repo-dir> or a stale subset of it. A file the repo does
+# not ship AT ALL makes it false - that file is the user's, and a skill is
+# replaced whole, so linking over it would be the destructive case.
+skill_tree_stale() {
+  local dst="$1" src="$2" f rel
+  [ -d "$dst" ] || return 0
+  for f in $(find "$dst" -type f 2>/dev/null); do
+    rel="${f#"$dst"/}"
+    [ -f "$src/$rel" ] || return 1
+    if cmp -s "$src/$rel" "$f"; then continue; fi
+    is_stale_subset "$f" "$src/$rel" || return 1
+  done
+  return 0
+}
+
+# link_skill_safe <repo-skill-dir> <dst> - make <dst> a symlink to the repo's
+# skill directory, so a `git pull` updates the skill on this machine. Converts
+# an existing installation only when skill_tree_stale says it is an old copy of
+# ours; a diverged tree is kept and named, exactly as install_link_safe does for
+# a single file.
+link_skill_safe() {
+  local src="$1" dst="$2"
+  if [ -L "$dst" ]; then
+    if [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+    rm -f "$dst"
+  elif [ -d "$dst" ]; then
+    if ! skill_tree_stale "$dst" "$src"; then
+      echo -e "  ${YELLOW}! kept $dst as it is: it is not merely an out-of-date copy of $src, so it was NOT replaced by a link.${NC}"
+      return 0
+    fi
+    # Backed up even though it is provably only an old copy of ours: a skill is
+    # a tree and this removes a directory, which is the one thing in this script
+    # that must never be undoable. ...OUTSIDE the skills root, or the backup
+    # registers as a second skill - the same rule step_skills follows.
+    backup "$dst" "$(dirname "$(dirname "$dst")")/skill-backups"
+    rm -rf "${dst:?}"
+  elif [ -e "$dst" ]; then
+    backup "$dst"
+    rm -f "$dst"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+  echo "  linked: $dst → $src"
+}
+
 # install_file <src> <dst> - install_copy, then mark <dst> executable.
 #
 # With LINK_HOOKS=1 in sunstone.conf it links instead, exactly as LINK_CLAUDE_MD
@@ -520,6 +623,37 @@ if [ -n "$CONF_REPO" ] && [ "$(conf_get "$CONF_REPO" LINK_CLAUDE_MD "")" = "1" ]
   echo ""
 fi
 
+# LINK_COMMANDS=1 / LINK_SKILLS=1: the twins of LINK_HOOKS, for ~/.claude/commands
+# and ~/.claude/skills.
+#
+# ⛔ WHY THEY EXIST, and it is a measured failure rather than a tidiness idea.
+# Hooks can be LINKED, so a fix pushed here reaches every machine on `git pull`.
+# Commands and skills were only ever COPIED - and nothing re-copied them, and
+# nothing REPORTED that they were behind. Counted on one box: three of six
+# installed commands were strict subsets of their repo copy, with zero lines of
+# their own, i.e. never refreshed since the missing sections landed. One of those
+# missing sections was the rule that keeps an unattended run from failing its own
+# commit on every slice. The same week, a skill edited here needed a hand copy to
+# reach the same machine. "A fix that reaches every checkout and no live machine,
+# and nothing reports it" is the defect CLASS; linking is what removes it.
+#
+# Off by default, exactly like LINK_HOOKS: a link into a checkout is a surprise
+# on a machine that later moves that checkout, and Windows cannot always make
+# one. So linking is the fix for machines that want it, and install-doctor's
+# staleness check (claude-setup/scripts/install-doctor.sh) is what makes the
+# drift VISIBLE on every machine whether the keys are set or not. The reporting
+# half is not optional; this half is.
+COMMANDS_MODE=""
+SKILLS_MODE=""
+if [ -n "$CONF_REPO" ]; then
+  if [ "$(conf_get "$CONF_REPO" LINK_COMMANDS "")" = "1" ]; then COMMANDS_MODE="L"; fi
+  if [ "$(conf_get "$CONF_REPO" LINK_SKILLS "")"   = "1" ]; then SKILLS_MODE="L"; fi
+  if [ -n "$COMMANDS_MODE" ] || [ -n "$SKILLS_MODE" ]; then
+    echo "  ${COMMANDS_MODE:+LINK_COMMANDS=1 }${SKILLS_MODE:+LINK_SKILLS=1 }: those trees will be symlinks to their repo sources, so a pull updates them (a file of yours that has diverged is kept and named, never replaced)"
+    echo ""
+  fi
+fi
+
 INSTALLED=""   # comma list of the steps that installed something from the current root
 OVERRIDDEN=0   # files of the current step that a later root ships too
 LAST_ROOT=""   # the root applied last; set before the roots are applied
@@ -543,8 +677,9 @@ step_end() {
   OVERRIDDEN=0
 }
 
-# ship <root> <rel> <dst> [x|l] - install <root>/<rel> at <dst> (executable
-# with "x", as a symlink with "l") unless a LATER root ships the same <rel>:
+# ship <root> <rel> <dst> [x|l|L] - install <root>/<rel> at <dst> (executable
+# with "x", as a symlink with "l", as a symlink that refuses to overwrite a
+# diverged file with "L") unless a LATER root ships the same <rel>:
 # the last root wins without the earlier copy landing first, which would back
 # the file up on every run.
 # Returns 0 installed, 1 not shipped by this root, 2 overridden.
@@ -558,6 +693,7 @@ ship() {
   case "$mode" in
     x) install_file "$root/$rel" "$dst" ;;
     l) install_link "$root/$rel" "$dst" ;;
+    L) install_link_safe "$root/$rel" "$dst" ;;
     *) install_copy "$root/$rel" "$dst" ;;
   esac
 }
@@ -588,6 +724,13 @@ step_skills() {
     fi
     for dest in "$HOME_DIR/.codex/skills" "$HOME_DIR/.config/opencode/skills" "$CLAUDE_DIR/skills"; do
       mkdir -p "$dest"
+      # With LINK_SKILLS=1 the skill becomes a symlink to the repo directory, so
+      # editing the skill here IS editing it on this machine and a pull carries
+      # it. Everything below is the copy path, which is still the default.
+      if [ "$SKILLS_MODE" = "L" ]; then
+        link_skill_safe "${d%/}" "$dest/$name"
+        continue
+      fi
       # ⚠️ A skill is replaced WHOLE (rm -rf + cp -r) rather than merged: a
       # merge would strand files that an older version of the skill shipped
       # and the new one dropped. That makes this the one step that can destroy
@@ -604,7 +747,7 @@ step_skills() {
     done
     n=$((n + 1))
   done
-  step_end skills "$root" "$n" "$n → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills"
+  step_end skills "$root" "$n" "$n → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills${SKILLS_MODE:+ (symlinks)}"
 }
 
 # agents/AGENTS.md → ~/AGENTS.md ; agents/CLAUDE.md → ~/CLAUDE.md + ~/.claude/CLAUDE.md
@@ -657,11 +800,11 @@ step_opencode() {
   step_end opencode "$root" "$n" "$got"
 }
 
-# claude-setup/commands/*.md → ~/.claude/commands/
+# claude-setup/commands/*.md → ~/.claude/commands/ (symlinks with LINK_COMMANDS=1)
 step_commands() {
   local root="$1" n
-  ship_dir "$root" claude-setup/commands "$CLAUDE_DIR/commands" '*.md'; n="$SHIPPED"
-  step_end commands "$root" "$n" "$n → ~/.claude/commands"
+  ship_dir "$root" claude-setup/commands "$CLAUDE_DIR/commands" '*.md' "$COMMANDS_MODE"; n="$SHIPPED"
+  step_end commands "$root" "$n" "$n → ~/.claude/commands${COMMANDS_MODE:+ (symlinks)}"
 }
 
 # claude-setup/config/agents/*.md → ~/.claude/agents/ - nothing in Claude Code
@@ -909,6 +1052,9 @@ cat <<'CONF'
     BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on
     BUS_SIDE=""                                 this machine's side (default: windows/mac/wsl/linux, detected)
     LINK_CLAUDE_MD=""                           1 = setup.sh symlinks ~/CLAUDE.md and ~/.claude/CLAUDE.md to the repo files
+    LINK_HOOKS=""                               1 = setup.sh symlinks ~/.claude/hooks/* and ~/.git-hooks/*, so a pull updates them
+    LINK_COMMANDS=""                            1 = setup.sh symlinks ~/.claude/commands/*.md, so a pull updates them
+    LINK_SKILLS=""                              1 = setup.sh symlinks ~/.claude/skills/<name>, so a pull updates them
 CONF
 echo ""
 

@@ -285,6 +285,179 @@ if [ -n "$migs" ] && [ -d "$migs" ]; then
   [ -z "$pending" ] && ok "migrations: all applied" || warn "migrations pending:$pending"
 fi
 
+# --- 8. an installed command or skill that the repo has since MOVED PAST ------
+# ⛔ THE FAILURE THIS EXISTS FOR, and it is the same class as check 1 wearing a
+# different hat. Hooks can be symlinked (LINK_HOOKS), so a fix pushed to the repo
+# reaches every machine on `git pull`. Commands and skills are COPIED by setup -
+# and nothing ever re-copies them, and until this check, nothing said they were
+# behind. Counted on one machine: three of six installed commands were strict
+# subsets of their repo copy with ZERO lines of their own, i.e. never refreshed
+# since the missing sections landed; one of the missing sections was the rule that
+# keeps an unattended run from failing its own commit on every slice. A skill hit
+# the same wall the same week. Every symptom was a person noticing, days later.
+#
+# ⚠️ STALE AND DIVERGED ARE DIFFERENT ANSWERS AND ONLY ONE IS SAFE TO FIX.
+#   stale    - every line of the installed file also appears in the repo copy,
+#              and the repo copy has lines the installed one lacks. That is a
+#              copy nobody touched, only failed to refresh. --fix refreshes it.
+#   diverged - the installed file has at least one line of its own. That may be
+#              somebody's deliberate local edit, so it is REPORTED AND LEFT. No
+#              --fix, no backup-and-replace: named, and the person decides.
+# Reported as ⚠ rather than ⛔ on purpose: nothing is broken right now, the file
+# is merely behind, and that is exactly the definition of the silent class this
+# script prints warnings for.
+#
+# subset_of <installed> <repo> - the predicate above. It is the same one as
+# is_stale_subset() in setup.sh and the two must agree: that one CONVERTS what
+# this one REPORTS. awk, not python3, so a machine without python3 still gets the
+# answer instead of a skipped check.
+subset_of() {
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  # A zero-length repo file would make awk's FNR==NR true for the second file's
+  # first record too, comparing the installed file against itself.
+  [ -s "$2" ] || return 1
+  awk '
+    FNR==NR { repo[$0]=1; next }
+    { inst[$0]=1; if (!($0 in repo)) extra++ }
+    END {
+      for (l in repo) if (!(l in inst)) missing++
+      exit (extra+0 == 0 && missing+0 > 0) ? 0 : 1
+    }
+  ' "$2" "$1"
+}
+
+# file_state <installed> <repo> -> link | same | stale | diverged | absent
+file_state() {
+  if [ -L "$1" ]; then
+    # A symlink INTO the repo tracks it by construction; one pointing anywhere
+    # else is judged on its content like any other file.
+    t=$(readlink "$1" 2>/dev/null)
+    [ "$t" = "$2" ] && { echo link; return; }
+  fi
+  [ -e "$1" ] || { echo absent; return; }
+  cmp -s "$1" "$2" && { echo same; return; }
+  subset_of "$1" "$2" && { echo stale; return; }
+  echo diverged
+}
+
+# tree_state <installed-dir> <repo-dir> -> link | same | stale | diverged | absent
+# A tree is only "stale" when it holds no file of its own AND every file that
+# differs is a stale subset. One installed-only file makes the whole tree
+# diverged: a skill is replaced whole, so that file is what would be destroyed.
+tree_state() {
+  if [ -L "$1" ]; then
+    t=$(readlink "$1" 2>/dev/null)
+    [ "$t" = "$2" ] && { echo link; return; }
+  fi
+  [ -d "$1" ] || { echo absent; return; }
+  _any_diff=0
+  for f in $(find "$1" -type f 2>/dev/null); do
+    _rel=${f#"$1"/}
+    [ -f "$2/$_rel" ] || { echo diverged; return; }
+    cmp -s "$f" "$2/$_rel" && continue
+    _any_diff=1
+    subset_of "$f" "$2/$_rel" || { echo diverged; return; }
+  done
+  # A file the repo added and this tree never received is staleness too, and the
+  # loop above cannot see it - it only walks what is installed.
+  for f in $(find "$2" -type f 2>/dev/null); do
+    _rel=${f#"$2"/}
+    [ -f "$1/$_rel" ] || _any_diff=1
+  done
+  [ "$_any_diff" = "1" ] && echo stale || echo same
+}
+
+# Which root a given name comes from: setup applies the framework root first and
+# the personal overlay LAST, and the last root wins - so resolve against the
+# personal root when it ships the same name.
+src_for() {  # <rel-path> -> absolute source path, or empty
+  for _r in "${MEM:-}" "$REPO"; do
+    [ -n "$_r" ] && [ -e "$_r/$1" ] && { printf '%s\n' "$_r/$1"; return; }
+  done
+}
+
+stale_list=""; diverged_list=""; absent_list=""; tracked=0
+# commands: one .md per slash command
+for root in "$REPO" "${MEM:-}"; do
+  [ -n "$root" ] && [ -d "$root/claude-setup/commands" ] || continue
+  for src in "$root"/claude-setup/commands/*.md; do
+    [ -f "$src" ] || continue
+    name=$(basename "$src")
+    real=$(src_for "claude-setup/commands/$name"); [ -n "$real" ] || continue
+    [ "$real" = "$src" ] || continue     # a later root ships it; judged there
+    tracked=$((tracked+1))
+    case "$(file_state "$CFG/commands/$name" "$real")" in
+      stale)    stale_list="$stale_list commands/$name" ;;
+      diverged) diverged_list="$diverged_list commands/$name" ;;
+      absent)   absent_list="$absent_list commands/$name" ;;
+    esac
+  done
+done
+# skills: one directory per skill
+for root in "$REPO" "${MEM:-}"; do
+  [ -n "$root" ] && [ -d "$root/skills" ] || continue
+  for src in "$root"/skills/*/; do
+    [ -d "$src" ] || continue
+    name=$(basename "$src")
+    real=$(src_for "skills/$name"); [ -n "$real" ] || continue
+    [ "$real" = "${src%/}" ] || continue
+    tracked=$((tracked+1))
+    case "$(tree_state "$CFG/skills/$name" "$real")" in
+      stale)    stale_list="$stale_list skills/$name" ;;
+      diverged) diverged_list="$diverged_list skills/$name" ;;
+      absent)   absent_list="$absent_list skills/$name" ;;
+    esac
+  done
+done
+
+if [ "$tracked" = "0" ]; then
+  warn "commands/skills: nothing shipped to compare - this check did NOT run"
+else
+  if [ -n "$stale_list" ]; then
+    if [ "$FIX" = "1" ]; then
+      for item in $stale_list; do
+        kind=${item%%/*}; name=${item#*/}
+        if [ "$kind" = "commands" ]; then
+          real=$(src_for "claude-setup/commands/$name")
+          mkdir -p "$CFG/commands" && cp "$real" "$CFG/commands/$name" && echo "  → refreshed commands/$name"
+        else
+          real=$(src_for "skills/$name")
+          # Safe to replace whole: "stale" proved this tree holds no file the
+          # repo does not also ship, so nothing here is anybody's but ours.
+          rm -rf "${CFG:?}/skills/$name" && cp -r "$real" "$CFG/skills/$name" && echo "  → refreshed skills/$name"
+        fi
+      done
+      ok "commands/skills: refreshed what was only out of date"
+    else
+      warn "STALE - installed but never refreshed since the repo moved on:$stale_list   (this script with --fix refreshes them; LINK_COMMANDS=1 / LINK_SKILLS=1 in sunstone.conf stops it happening again)"
+    fi
+  fi
+  [ -n "$diverged_list" ] && warn "DIVERGED - edited here, so NOT touched and not refreshable:$diverged_list   (diff each against the repo; keep the local change or delete the file and re-run setup)"
+  [ -n "$absent_list" ] && warn "commands/skills shipped but never installed:$absent_list   (re-run setup)"
+  [ -z "$stale_list$diverged_list$absent_list" ] && ok "commands/skills: all $tracked match the repo (or are symlinks to it)"
+fi
+
+# The two sibling skill stores setup also writes. They belong to tools that are
+# not in this workflow, so their staleness is stated ONCE and never itemised:
+# a doctor that itemises what nobody uses is a doctor people learn to scroll past.
+for other in "$HOME/.codex/skills" "$HOME/.config/opencode/skills"; do
+  [ -d "$other" ] || continue
+  odiff=0
+  # ⚠️ Two roots, iterated separately. "${MEM:+$MEM/skills/}"*/ collapses to a
+  # bare */ when there is no personal repo - which globs the CURRENT DIRECTORY
+  # and compares whatever happens to be there.
+  for sroot in "$REPO/skills" "${MEM:+$MEM/skills}"; do
+    [ -n "$sroot" ] && [ -d "$sroot" ] || continue
+    for src in "$sroot"/*/; do
+      [ -d "$src" ] || continue
+      name=$(basename "$src")
+      [ -e "$other/$name" ] || continue
+      diff -rq "${src%/}" "$other/$name" >/dev/null 2>&1 || odiff=$((odiff+1))
+    done
+  done
+  [ "$odiff" -gt 0 ] && warn "${other#$HOME/}: $odiff skill(s) there differ from the repo - setup still copies skills into this store; if the tool that reads it is not in use, the copies are stale code nobody is watching"
+done
+
 [ "$QUIET" = "1" ] && [ "$problems" = "0" ] && [ "$warnings" = "0" ] && exit 0
 echo
 if [ "$problems" = "0" ] && [ "$warnings" = "0" ]; then
