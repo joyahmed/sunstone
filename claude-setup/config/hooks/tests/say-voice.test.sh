@@ -94,7 +94,18 @@ cat > "$BIN/paplay" <<SH
 printf 'played %s\n' "\$1" >> "$TMPROOT/played"
 exit 0
 SH
-chmod +x "$BIN/edge-tts" "$BIN/ffmpeg" "$BIN/paplay" || exit 2
+# Stub macOS `say`, inert: writes nothing, speaks nothing, exits 0. On Darwin the
+# platform rung is reached unconditionally and invokes `say`, so without this the
+# fall-through case would be asserting "command not found" - a fact about the fixture,
+# not a behaviour of the code. With it, the rung RESOLVES and what the case measures is
+# that the ladder got there. `say -v '?'` returns nothing, so no variant matches and the
+# system voice is used, which is the honest outcome for a placeholder name. Off Darwin
+# nothing on the ladder consults it.
+cat > "$BIN/say" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod +x "$BIN/edge-tts" "$BIN/ffmpeg" "$BIN/paplay" "$BIN/say" || exit 2
 
 # One case = one fake HOME, so nothing leaks between them.
 # run_say <case dir> <voice file contents ('' = no file)> <extra env...> -- speaks "one sentence"
@@ -202,17 +213,32 @@ echo "-- the ladder still has its lower rungs"
 
 # CASE 6: the top rung failing must not eat the sentence. say.sh re-runs itself with
 # the rung switched off rather than duplicating the platform ladder, so the log
-# carries two lines: the failure, then whatever the platform could do (nothing here,
-# because the fake PATH has no platform speech on it - which is itself the point:
-# unexplained silence is the failure this log exists to close).
+# carries two lines: the failure, then whatever the platform could do - and
+# unexplained silence is the failure this log exists to close.
+#
+# ⭐ WHICH rung answers is a property of the KERNEL, not of say.sh, so the expectation
+# is branched on it. The fixture symlinks the REAL `uname` on purpose (see the PATH
+# block above), so the re-exec walks the ladder of the machine the battery is running
+# on. Off Darwin nothing on the fake PATH can speak and the ladder bottoms out with
+# backend=none; on Darwin the macOS rung always exists and is the correct place for the
+# ladder to stop, so what is asserted there is that the rung was reached, named, and
+# resolved. Both platforms run the same four assertions - neither side is skipped.
+# ⛔ The kernel is never faked to make one expectation fit both. A `uname` that lied
+# would hide a real platform-detection regression in say.sh, which is exactly the class
+# of bug this battery exists to catch.
+case "$(uname -s 2>/dev/null)" in
+	Darwin) rung6="backend=macos-say"; rung6_outcome="rc=0" ;;
+	*)      rung6="backend=none";      rung6_outcome="outcome=no backend found" ;;
+esac
 rm -f "$ARGV"
 run_say case6 "$V_FILE" EDGE_FAIL=1
 t "case6 exit 0 even though the top rung failed" 0 "$?"
-wait_for "$CASE_LOG" "backend=none" || true
+wait_for "$CASE_LOG" "$rung6" || true
 log6="$(cat "$CASE_LOG" 2>/dev/null)"
-has "case6 the failed rung is named"          "backend=edge-tts" "$log6"
-has "case6 and it says it fell through"       "falling through"  "$log6"
-has "case6 the lower ladder then reported in" "backend=none"     "$log6"
+has "case6 the failed rung is named"              "backend=edge-tts" "$log6"
+has "case6 and it says it fell through"           "falling through"  "$log6"
+has "case6 the lower ladder then reported in"     "$rung6"           "$log6"
+has "case6 and the rung it reached said how it went" "$rung6_outcome" "$log6"
 
 # CASE 7: never blocks. The contract is one fork and return; a synthesiser that takes
 # five seconds must cost the caller none of them.
