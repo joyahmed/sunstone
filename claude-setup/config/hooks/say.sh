@@ -10,9 +10,11 @@
 #      other engine on the machine - a Narrator-locked voice is one of those - so
 #      without it a configured voice can be silently ignored.
 #   2. the platform's own speech:
-#      macOS  -> `say`, the configured voice if installed, else the best quality
-#                tier present (premium/enhanced voices appear after a download in
-#                System Settings > Accessibility > Spoken Content > Manage Voices).
+#      macOS  -> `say`, with the voice chosen in System Settings unless a voice is
+#                configured (the premium/enhanced variant OF THAT NAME is preferred,
+#                and appears after a download in Accessibility > Spoken Content >
+#                Manage Voices). A configured name with no installed variant falls
+#                through to the system voice and says so in the log.
 #      Windows (Git Bash) and WSL -> powershell.exe running say.ps1 beside this file.
 #      Linux  -> Piper (~/.local/share/piper, PIPER_VOICE) if installed, else
 #                spd-say or espeak.
@@ -27,8 +29,9 @@
 # a voice nobody chose, and the file still looks like it is expressing a preference.
 #   $CLAUDE_VOICE, else one line in $HOME/.claude/hooks/claude-voice.txt
 # read exactly the way chime.sh and voice-bake.sh already read it - one mechanism,
-# not a third invention. Empty means "whatever this platform gives", which is the
-# setting the person already made in their OS, and that is a correct answer.
+# not a third invention. Unset means "whatever this platform gives": the operating
+# system holds a per-user answer, chosen in the person's own settings, and this
+# framework has no business overriding it with a name.
 # ⚠️ $HOME differs per side (a WSL /home/<user> vs a Windows C:\Users\<user>), so
 # each side's say.sh resolves its OWN side's file. EDGE_TTS_VOICE and PIPER_VOICE
 # stay separate and still win for their own engine: a neural model id is a different
@@ -132,13 +135,30 @@ say_log() {
 [ -e "$HOME/.claude/hooks/say-off" ] && { say_log 'backend=none outcome=muted reason=say-off file present, nothing was spoken'; exit 0; }
 
 # ─────────────────────────────── the configured voice ───────────────────────────
-# Two lines, deliberately identical to chime.sh's and voice-bake.sh's: $CLAUDE_VOICE
-# wins, else the one line in claude-voice.txt beside the other name files. Exported,
-# so every branch below and say.ps1 inherit it with no further plumbing.
+# First non-empty line of stdin, \r stripped and both ends trimmed - the exact reading
+# the box-name file gets (first_line in bin/supermode), so the two stay in step.
+# ⛔ WHY NOT `cat`: cat hands back the trailing newline, and a file holding only
+# spaces or a bare newline would become a request for a voice named "" - which is a
+# REQUEST, not silence, and would ask the engine for a voice that cannot exist instead
+# of leaving the choice alone. A blank file must read as UNSET. The status line painters
+# were bitten by precisely this on 2026-09-26.
+say_first_line() {
+  awk 'NR<=20 { gsub(/\r/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") { print; exit } }' 2>/dev/null
+}
+
+# ⭐ What this machine asked for: CLAUDE_VOICE in the environment first, then the
+# machine-local file. One spelling, read the same way by EVERY branch that can pick a
+# voice - and the file lives outside every repo on purpose, because a preferred voice
+# belongs to the desk, not to the framework. Resolved HERE rather than inside one
+# branch so the edge-tts rung, macOS `say`, say.ps1 and piper all see one answer.
 # ⛔ Never written from here - the file is the user's.
-say_voice="${CLAUDE_VOICE:-}"
-[ -n "$say_voice" ] || say_voice="$(cat "$HOME/.claude/hooks/claude-voice.txt" 2>/dev/null | tr -d '\r\n')"
-if [ -n "$say_voice" ]; then CLAUDE_VOICE="$say_voice"; export CLAUDE_VOICE; fi
+say_want="$(printf '%s\n' "${CLAUDE_VOICE:-}" | say_first_line)"
+if [ -z "$say_want" ] && [ -f "$HOME/.claude/hooks/claude-voice.txt" ]; then
+  say_want="$(say_first_line <"$HOME/.claude/hooks/claude-voice.txt")"
+fi
+# Exported so say.ps1, started by the Windows/WSL branches below, inherits the answer
+# instead of re-deriving it from a $HOME that is not even the same one.
+if [ -n "$say_want" ]; then CLAUDE_VOICE="$say_want"; export CLAUDE_VOICE; fi
 
 # ── helpers shared by the edge-tts rung ────────────────────────────────────────
 # `timeout` is not on a stock macOS, and a missing timeout must not cost the word.
@@ -211,7 +231,7 @@ say_play_wav() {   # <wav>
 # The whole attempt is inside a background subshell - the caller is freed by one fork
 # as before - and on failure that subshell re-runs this script with the rung off, so
 # the platform ladder still gets its turn without a line of it being duplicated here.
-say_edge_want="${EDGE_TTS_VOICE:-$say_voice}"
+say_edge_want="${EDGE_TTS_VOICE:-$say_want}"
 case "${SAY_NO_EDGE:-0}:$say_edge_want" in
   1:*) ;;
   *:*-*Neural)
@@ -244,22 +264,49 @@ case "${SAY_NO_EDGE:-0}:$say_edge_want" in
 esac
 
 if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-  # ⛔ This used to be a list of ten voice NAMES written here, which is the defect
-  # this file now refuses: on a Mac without those downloads it matched nothing and
-  # the choice silently became `say`'s default while looking deliberate. What is
-  # left is (a) the configured voice and (b) a QUALITY TIER, which is a property of
-  # the install rather than a name - premium and enhanced voices only exist on a box
-  # where someone downloaded one, so their presence IS the preference.
   voice=""
-  voices="$(say -v '?' 2>/dev/null)"
-  if [ -n "$say_voice" ] && printf '%s\n' "$voices" | grep -q "^$say_voice "; then voice="$say_voice"; fi
-  if [ -z "$voice" ]; then
-    for tier in '(Premium)' '(Enhanced)'; do
-      voice="$(printf '%s\n' "$voices" | grep -F "$tier" | head -1 | awk -F'  +' '{print $1}')"
-      [ -n "$voice" ] && break
+
+  # ⛔ THERE IS DELIBERATELY NO DEFAULT LIST HERE, and that is the whole point of this
+  # block. This branch used to hunt down a hardcoded run of five named human voices
+  # before falling back - one person's taste, shipped to every stranger who installs
+  # this framework, with nothing on screen to say why those names and no way to see it
+  # happening. A framework has no business naming the voice that comes out of someone
+  # else's speakers. The operating system already holds a per-user answer, chosen in
+  # System Settings > Accessibility > Spoken Content, so when nothing is requested the
+  # right move is to pass no -v at all and let that answer stand.
+  #
+  # ⭐ What IS kept from the old list is the part that was mechanism rather than taste:
+  # it did per-name quality selection, so that survives, generalised to whatever name
+  # is actually requested. A bare name resolves to the BEST installed variant OF THAT
+  # SAME NAME, so a later free Premium or Enhanced download upgrades quality with no
+  # config edit. A request that already names a variant is treated the same way, by its
+  # base name.
+  #
+  # ⛔ And never anything else: `say -v <not installed>` errors, and a sentence lost to
+  # a typo is the failure being closed here - so a name with no installed variant at all
+  # falls through to the system voice rather than borrowing a different one or failing.
+  say_matched=0
+  if [ -n "$say_want" ]; then
+    say_base="$say_want"
+    case "$say_base" in
+      *' (Premium)'|*' (Enhanced)') say_base="${say_base% (*)}" ;;
+    esac
+    voices="$(say -v '?' 2>/dev/null)"
+    for v in "$say_base (Premium)" "$say_base (Enhanced)" "$say_base"; do
+      # Literal prefix test, not a regex one: this name comes from a file, and a stray
+      # `.` or `*` in it must match no voice rather than the first one on the machine.
+      if printf '%s\n' "$voices" | awk -v n="$v " 'index($0, n) == 1 { f = 1; exit } END { exit !f }'; then
+        voice="$v"; say_matched=1; break
+      fi
     done
   fi
-  # Still empty -> no -v flag at all, i.e. the voice chosen in System Settings.
+
+  # An unhonoured request is worth a word in the log: it is the one case where the voice
+  # heard is not the voice configured, and it is otherwise completely silent.
+  say_vnote=""
+  if [ -n "$say_want" ] && [ "$say_matched" = "0" ]; then
+    say_vnote=" voice_request=$(say_flatten "$say_want") voice_outcome=no installed variant, used the system voice"
+  fi
   # The caller is freed here; the subshell stays behind to wait for `say` and write
   # the verdict. stdout is still discarded - only stderr is worth keeping - so the
   # latency the caller sees is unchanged: one fork, exactly as before.
@@ -267,7 +314,7 @@ if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
   # made macOS the one platform where a failure left no trace at all.
   (
     err="$(say ${voice:+-v "$voice"} "$text" 2>&1 >/dev/null)"; rc=$?
-    say_log "backend=macos-say voice=${voice:-default} rc=$rc${err:+ stderr=$(say_flatten "$err")}"
+    say_log "backend=macos-say voice=${voice:-system}$say_vnote rc=$rc${err:+ stderr=$(say_flatten "$err")}"
   ) >/dev/null 2>&1 &
   exit 0
 fi
@@ -294,7 +341,7 @@ if grep -qi microsoft /proc/version 2>/dev/null && command -v powershell.exe >/d
   # An exported variable does NOT cross into a Windows process on its own; WSLENV is
   # the only route, and it is appended to rather than replaced so anything already
   # being forwarded keeps going. Same mechanism chime.sh uses for the same reason.
-  if [ -n "$say_voice" ]; then WSLENV="${WSLENV:+$WSLENV:}CLAUDE_VOICE"; export WSLENV; fi
+  if [ -n "$say_want" ]; then WSLENV="${WSLENV:+$WSLENV:}CLAUDE_VOICE"; export WSLENV; fi
   # ⚠️ rc=0 here means powershell.exe exited cleanly, which say.ps1 does even when
   # its WinRT voice fails and the SAPI fallback carries the sentence. Which of the
   # two actually spoke is say.ps1's own record: %TEMP%\claude-say-errors.log.
@@ -316,7 +363,7 @@ piper="$HOME/.local/share/piper/piper/piper"
 vdir="$HOME/.local/share/piper/voices"
 voice=""
 if [ -n "${PIPER_VOICE:-}" ]; then voice="$vdir/$PIPER_VOICE.onnx"
-elif [ -n "$say_voice" ] && [ -r "$vdir/$say_voice.onnx" ]; then voice="$vdir/$say_voice.onnx"; fi
+elif [ -n "$say_want" ] && [ -r "$vdir/$say_want.onnx" ]; then voice="$vdir/$say_want.onnx"; fi
 if [ -z "$voice" ] || [ ! -r "$voice" ]; then
   for f in "$vdir"/*.onnx; do [ -r "$f" ] && { voice="$f"; break; }; done
 fi

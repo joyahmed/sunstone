@@ -188,6 +188,102 @@ function Install-File {
     Copy-Item -LiteralPath $Src -Destination $Dst -Force
 }
 
+# Test-StaleSubset - the twin of setup.sh's is_stale_subset(): true when
+# $Installed is a STRICT SUBSET of $Repo, i.e. every line of the installed file
+# also appears in the repo copy AND the repo copy has at least one line the
+# installed file lacks. That is exactly what a copy installed once and never
+# refreshed looks like, and it is the ONLY shape safe to replace without asking
+# anybody - a file somebody EDITED has lines of its own, which makes this false.
+#
+# ⚠️ THREE THINGS HERE ARE DELIBERATE AND EACH ONE IS A BUG IF CHANGED BACK.
+#  · A case-sensitive ORDINAL set, not a PowerShell hashtable. `@{}` compares
+#    string keys CASE-INSENSITIVELY, so two lines differing only in case would
+#    count as the same line and an edited file could read as a mere old copy.
+#  · An empty repo copy returns false, never true. Same refusal as the awk twin:
+#    with nothing to compare against, "missing lines" is meaningless and the
+#    answer would license replacing a file on no evidence at all.
+#  · Get-Content drops the line terminator, so this is EOL-agnostic where the
+#    awk twin is not. .gitattributes keeps the whole tree LF on every platform,
+#    so the two agree on the files that actually exist; if a CRLF copy ever does
+#    turn up, this side is the LENIENT one - it would call it an old copy where
+#    POSIX calls it diverged. Said here rather than left to be discovered.
+function Test-StaleSubset {
+    param([string]$Installed, [string]$Repo)
+    if (-not (Test-Path -LiteralPath $Installed -PathType Leaf)) { return $false }
+    if (-not (Test-Path -LiteralPath $Repo -PathType Leaf)) { return $false }
+    try {
+        $repoLines = @(Get-Content -LiteralPath $Repo -ErrorAction Stop)
+        $instLines = @(Get-Content -LiteralPath $Installed -ErrorAction Stop)
+    } catch {
+        # Unreadable is not "refreshable". Same bias as Get-TreeSignature: when
+        # in doubt, do not be the thing that deleted somebody's file.
+        return $false
+    }
+    if ($repoLines.Count -eq 0) { return $false }
+    $repoSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($l in $repoLines) { [void]$repoSet.Add([string]$l) }
+    $instSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($l in $instLines) { [void]$instSet.Add([string]$l) }
+    foreach ($l in $instSet) { if (-not $repoSet.Contains($l)) { return $false } }
+    foreach ($l in $repoSet) { if (-not $instSet.Contains($l)) { return $true } }
+    return $false
+}
+
+# Install-FileSafe - Install-File for a file people edit in place, and the twin
+# of setup.sh's install_copy_safe(). Used for ~\.claude\commands\*.md.
+#
+# ⛔ WHY IT EXISTS, and it is a measured failure rather than a tidiness idea.
+# Commands are installed as plain copies and NOTHING refreshed them between
+# runs, so they drift: counted on one box, three of six installed commands were
+# strict subsets of their repo copy with zero lines of their own - never
+# refreshed since the missing sections landed, one of which was the rule that
+# keeps an unattended run from failing its own commit every slice. The obvious
+# repair - copy over them every run, which is what Install-File does - is the
+# one that must NOT be made here, because this is also the directory a person
+# edits a slash command in: it would buy the drift fix by destroying that edit,
+# leaving only a .bak in ~\.claude\backups that nobody ever reads again.
+#
+# Five answers, one of which writes:
+#   absent    → plain copy, silently (the normal install; unchanged)
+#   identical → nothing at all, so a re-run leaves no backup clutter
+#   subset    → REFRESHED, backed up first (Test-StaleSubset proved no local
+#               edit is in it), and the refresh is announced
+#   diverged  → KEPT and named on stdout. Never replaced, never backed up.
+#   symlink   → skipped entirely. A link already tracks its source, so there is
+#               nothing to refresh, and turning it back into a copy would
+#               re-create the drift the link was made to end.
+#
+# Behaviour parity with install_copy_safe() in setup.sh is the contract; the
+# POSIX side has the regression battery
+# (claude-setup/config/hooks/tests/setup-commands-refresh.test.sh), and there is
+# no pwsh on the boxes that run it, so a change here is checked by reading both.
+function Install-FileSafe {
+    param([string]$Src, [string]$Dst)
+    $existing = Get-Item -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+    if ($existing -and $existing.LinkType -eq "SymbolicLink") { return }
+    if (Test-Path -LiteralPath $Dst) {
+        if (Test-SameFile $Src $Dst) { return }
+        if (-not (Test-StaleSubset $Dst $Src)) {
+            Write-Host "  ! kept $Dst as it is: it differs from the repo copy by more than being out of date, so it was NOT refreshed." -ForegroundColor Yellow
+            Write-Host "    compare it with $Src and delete it if the local changes are not wanted."
+            return
+        }
+        # ⚠️ Assign the result: an uncaptured return flows into this function's
+        # output and then into Ship's, and the answer matters - a file is about
+        # to be overwritten, and without a backup it is left alone instead.
+        if (-not (Backup-Item $Dst)) {
+            Write-Host "    skipped: $Dst left exactly as it was" -ForegroundColor Yellow
+            return
+        }
+        Copy-Item -LiteralPath $Src -Destination $Dst -Force
+        Write-Host "  refreshed: $Dst (an old copy of $Src, with no local edits in it)"
+        return
+    }
+    $parent = Split-Path -Parent $Dst
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    Copy-Item -LiteralPath $Src -Destination $Dst -Force
+}
+
 # LINK_HOOKS is resolved exactly the way setup.sh's install_file() resolves it:
 # the key lives in the PERSONAL repo's sunstone.conf, read from the repo this
 # run resolved and otherwise from the recorded path file. That fallback is the
@@ -687,25 +783,29 @@ function Step-End {
 # Install <Root>\<Rel> at <Dst> unless a LATER root ships the same <Rel>: the
 # last root wins without the earlier copy landing first, which would back the
 # file up on every run. Returns $true when installed.
+# -Safe routes through Install-FileSafe instead: refresh an out-of-date copy,
+# keep and name an edited one. For the trees people edit in place (commands).
 function Ship {
-    param([string]$Root, [string]$Rel, [string]$Dst, [switch]$Link)
+    param([string]$Root, [string]$Rel, [string]$Dst, [switch]$Link, [switch]$Safe)
     if (-not (Test-Path -LiteralPath (Join-Path $Root $Rel) -PathType Leaf)) { return $false }
     if ($Root -ne $script:LastRoot -and (Test-Path -LiteralPath (Join-Path $script:LastRoot $Rel) -PathType Leaf)) {
         $script:Overridden++
         return $false
     }
-    if ($Link) { Install-HookFile (Join-Path $Root $Rel) $Dst } else { Install-File (Join-Path $Root $Rel) $Dst }
+    if ($Link) { Install-HookFile (Join-Path $Root $Rel) $Dst }
+    elseif ($Safe) { Install-FileSafe (Join-Path $Root $Rel) $Dst }
+    else { Install-File (Join-Path $Root $Rel) $Dst }
     return $true
 }
 
 # Ship every file of <Root>\<Rel> matching <Filter> into <Dst>; returns the count.
 function Ship-Dir {
-    param([string]$Root, [string]$Rel, [string]$Dst, [string]$Filter, [switch]$Link)
+    param([string]$Root, [string]$Rel, [string]$Dst, [string]$Filter, [switch]$Link, [switch]$Safe)
     $n = 0
     $dir = Join-Path $Root $Rel
     if (Test-Path -LiteralPath $dir -PathType Container) {
         foreach ($f in (Get-ChildItem -LiteralPath $dir -File -Filter $Filter)) {
-            if (Ship $Root (Join-Path $Rel $f.Name) (Join-Path $Dst $f.Name) -Link:$Link) { $n++ }
+            if (Ship $Root (Join-Path $Rel $f.Name) (Join-Path $Dst $f.Name) -Link:$Link -Safe:$Safe) { $n++ }
         }
     }
     return $n
@@ -906,7 +1006,10 @@ function Install-Root {
     Install-Agents $Root
     Install-Codex $Root
     Install-OpenCode $Root
-    $n = Ship-Dir $Root "claude-setup\commands" "$ClaudeDir\commands" "*.md"
+    # -Safe: a slash command is a text file that invites a local edit, so an
+    # out-of-date copy is refreshed and an edited one is kept and named, rather
+    # than every file being overwritten on every run. See Install-FileSafe.
+    $n = Ship-Dir $Root "claude-setup\commands" "$ClaudeDir\commands" "*.md" -Safe
     Step-End "commands" $Root $n "$n → ~\.claude\commands"
     # Subagent files: nothing in Claude Code switches the main model on a
     # condition, so these are the mechanism for "escalate this kind of work".

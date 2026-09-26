@@ -172,6 +172,32 @@ t "case5 nothing configured means no edge-tts attempt" "absent" "$([ -f "$ARGV" 
 if settle "$CASE_LOG"; then has "case5 silence is explained in the log" "backend=" "$(cat "$CASE_LOG" 2>/dev/null)"
 else bad "case5 silence is explained in the log" "a log line" "no log at all"; fi
 
+# CASE 5b: a voice file holding only whitespace reads as UNSET, not as a request for a
+# voice named "". Asserted here because the reader that guarantees it (say_first_line)
+# now sits at the top of the script and governs EVERY rung, not just macOS `say`: a
+# blank file that read as a request would hand edge-tts an empty --voice and lose the
+# sentence to a 400 on a machine whose owner had configured nothing at all.
+rm -f "$ARGV"
+CASE_HOME="$TMPROOT/case5b"; CASE_LOG="$CASE_HOME/say.log"
+mkdir -p "$CASE_HOME/.claude/hooks"
+printf '   \n\t\n' > "$CASE_HOME/.claude/hooks/claude-voice.txt"
+env -i PATH="$BIN" HOME="$CASE_HOME" TMPDIR="$CASE_HOME" CLAUDE_SAY_LOG="$CASE_LOG" \
+	bash "$SAY" "one sentence" >"$CASE_HOME/out" 2>"$CASE_HOME/err"
+t "case5b exit 0 on a whitespace-only voice file" 0 "$?"
+sleep 1
+t "case5b whitespace-only reads as unset, so no engine was asked" "absent" "$([ -f "$ARGV" ] && echo present || echo absent)"
+
+# CASE 5c: a \r-terminated line (a file written from the Windows side) is still the
+# voice, not the voice plus a carriage return - the same reading the box-name file gets.
+rm -f "$ARGV"
+CASE_HOME="$TMPROOT/case5c"; CASE_LOG="$CASE_HOME/say.log"
+mkdir -p "$CASE_HOME/.claude/hooks"
+printf '%s\r\n' "$V_FILE" > "$CASE_HOME/.claude/hooks/claude-voice.txt"
+env -i PATH="$BIN" HOME="$CASE_HOME" TMPDIR="$CASE_HOME" CLAUDE_SAY_LOG="$CASE_LOG" \
+	bash "$SAY" "one sentence" >"$CASE_HOME/out" 2>"$CASE_HOME/err"
+wait_for "$ARGV" "$V_FILE" || true
+has "case5c the \\r never reached the synthesiser" "--voice $V_FILE --text" "$(cat "$ARGV" 2>/dev/null)"
+
 echo "-- the ladder still has its lower rungs"
 
 # CASE 6: the top rung failing must not eat the sentence. say.sh re-runs itself with
