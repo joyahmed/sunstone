@@ -227,6 +227,65 @@ install_link_safe() {
   install_link "$src" "$dst"
 }
 
+# install_copy_safe <src> <dst> - install_copy for a file people edit in place.
+# The COPY-side twin of install_link_safe, and it exists because the two halves
+# of the same decision had opposite answers:
+#
+#   LINK_COMMANDS=1  (opt-in)  → install_link_safe: a diverged file is KEPT and
+#                                named, because a slash command invites a local
+#                                edit and a backup nobody reads is not consent.
+#   the default      (copies)  → install_copy: a diverged file was BACKED UP AND
+#                                OVERWRITTEN, every run, silently.
+#
+# So the careful path was the one you had to opt into, and the default clobbered.
+# ⛔ That is the half of the commands-drift defect a link key cannot reach: the
+# keys are off by default, so the machine that never sets one is exactly the
+# machine that both drifts AND loses a hand edit when somebody finally re-runs
+# setup. Five answers, and only one of them writes:
+#
+#   absent        → plain copy. The normal install; prints nothing, as before.
+#   identical     → nothing at all. No backup, no line, no clutter on a re-run.
+#   stale subset  → REFRESHED (backed up first). is_stale_subset proves the live
+#                   file holds no line of its own, i.e. it is an old copy of ours
+#                   and nobody's work is in it. This is the migration the drift
+#                   needed: three of six commands on one box were this shape.
+#   diverged      → kept, named on stdout with the diff to run. Never replaced.
+#   symlink       → skipped ENTIRELY, whatever it points at. A link already
+#                   tracks its source, so there is nothing to refresh; and
+#                   converting it back to a copy would re-create the drift this
+#                   whole mechanism exists to end. (install_copy removes a link
+#                   and copies over it, which is right for a hook - the mode is
+#                   the framework's choice there - and wrong for a command,
+#                   where the link IS the user's LINK_COMMANDS=1 answer.) A link
+#                   pointing somewhere unexpected is install-doctor's to report;
+#                   this function must not be the thing that quietly undoes it.
+#
+# ⚠️ The backup goes where backup() puts it - ~/.claude/backups, OUTSIDE
+# ~/.claude/commands - and that is not tidiness: a <name>.md.bak.<stamp> left in
+# the commands directory REGISTERS AS A SLASH COMMAND, an out-of-date one, one
+# pick away from being used. Same rule step_skills follows for the same reason.
+install_copy_safe() {
+  local src="$1" dst="$2"
+  # Before -e: a BROKEN link is still the user's link, and -e is false for one.
+  if [ -L "$dst" ]; then return 0; fi
+  if [ -e "$dst" ]; then
+    cmp -s "$src" "$dst" && return 0
+    if ! is_stale_subset "$dst" "$src"; then
+      echo -e "  ${YELLOW}! kept $dst as it is: it differs from the repo copy by more than being out of date, so it was NOT refreshed.${NC}"
+      echo    "    diff it against $src and delete it if the local changes are not wanted."
+      return 0
+    fi
+    backup "$dst"
+    rm -f "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "  refreshed: $dst (an old copy of $src, with no local edits in it)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+}
+
 # skill_tree_stale <installed-dir> <repo-dir> - the tree twin of
 # is_stale_subset, and the question is the same one: is this only an old copy of
 # ours? True when every regular file under <installed-dir> is either identical
@@ -664,6 +723,15 @@ fi
 # staleness check (claude-setup/scripts/install-doctor.sh) is what makes the
 # drift VISIBLE on every machine whether the keys are set or not. The reporting
 # half is not optional; this half is.
+#
+# ⛔ AND NEITHER IS THE COPY PATH'S OWN ANSWER. A key that is off by default
+# cannot repair the default, so the copy path has to be right on its own:
+# step_commands passes ${COMMANDS_MODE:-C}, and "C" is install_copy_safe - an
+# out-of-date copy is REFRESHED (and backed up), a file with lines of its own is
+# KEPT and named, and a symlink is left alone. That is the same three-way answer
+# LINK_COMMANDS=1 gives, minus the link; before it, the opt-in path protected a
+# hand-edited command and the default silently overwrote it, which is the wrong
+# way round for the path nobody configures.
 COMMANDS_MODE=""
 SKILLS_MODE=""
 if [ -n "$CONF_REPO" ]; then
@@ -698,9 +766,10 @@ step_end() {
   OVERRIDDEN=0
 }
 
-# ship <root> <rel> <dst> [x|l|L] - install <root>/<rel> at <dst> (executable
+# ship <root> <rel> <dst> [x|l|L|C] - install <root>/<rel> at <dst> (executable
 # with "x", as a symlink with "l", as a symlink that refuses to overwrite a
-# diverged file with "L") unless a LATER root ships the same <rel>:
+# diverged file with "L", as a copy that refuses to overwrite a diverged file
+# with "C") unless a LATER root ships the same <rel>:
 # the last root wins without the earlier copy landing first, which would back
 # the file up on every run.
 # Returns 0 installed, 1 not shipped by this root, 2 overridden.
@@ -715,6 +784,7 @@ ship() {
     x) install_file "$root/$rel" "$dst" ;;
     l) install_link "$root/$rel" "$dst" ;;
     L) install_link_safe "$root/$rel" "$dst" ;;
+    C) install_copy_safe "$root/$rel" "$dst" ;;
     *) install_copy "$root/$rel" "$dst" ;;
   esac
 }
@@ -821,10 +891,12 @@ step_opencode() {
   step_end opencode "$root" "$n" "$got"
 }
 
-# claude-setup/commands/*.md → ~/.claude/commands/ (symlinks with LINK_COMMANDS=1)
+# claude-setup/commands/*.md → ~/.claude/commands/ (symlinks with LINK_COMMANDS=1,
+# otherwise subset-safe copies: refreshed when out of date, kept when edited -
+# install_copy_safe, and ${COMMANDS_MODE:-C} is where that default is chosen).
 step_commands() {
   local root="$1" n
-  ship_dir "$root" claude-setup/commands "$CLAUDE_DIR/commands" '*.md' "$COMMANDS_MODE"; n="$SHIPPED"
+  ship_dir "$root" claude-setup/commands "$CLAUDE_DIR/commands" '*.md' "${COMMANDS_MODE:-C}"; n="$SHIPPED"
   step_end commands "$root" "$n" "$n → ~/.claude/commands${COMMANDS_MODE:+ (symlinks)}"
 }
 
