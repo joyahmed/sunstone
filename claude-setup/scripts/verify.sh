@@ -25,10 +25,24 @@
 #
 # ⚠️ NOT CHECKED, and no tier pretends otherwise: the 3 .ps1 files (a parse
 # check needs pwsh, which is not on the boxes this usually runs on), and every
-# .md. Said here rather than left to be discovered.
+# .md. Those are OUT OF SCOPE, not skips: no tier claims them, so no tier can
+# fail to run them, and they never move the verdict. A SKIP is different - it is
+# a tier that was supposed to run and could not.
+#
+# ⛔ THE VERDICT INVARIANT. Exit 0 requires ALL THREE:
+#     EXECUTED > 0   at least one tier actually checked something
+#     RED == 0       nothing that ran failed
+#     SKIPPED == 0   nothing that should have run was missed
+# Any skip at all means INCOMPLETE means exit 1. A gate that can exit 0 with a
+# nonzero skip count is a gate that can LIE: it prints GREEN for work it never
+# did. This script used to do exactly that - with node, python3 and bash all
+# absent it skipped every tier, printed the skip list, then printed GREEN and
+# exited 0, and the pre-push hook read that 0 as "verified".
 #
 # Usage: sh claude-setup/scripts/verify.sh [--quick]
 #   --quick skips tier 5 (the batteries spawn processes and are the slow tier).
+#   ⚠️ --quick therefore CANNOT exit 0 - a deliberately narrowed run is still a
+#   narrowed run. Use it to see tiers 1-4 fast, never as a gate.
 
 set -u
 
@@ -70,12 +84,32 @@ if ! command -v node >/dev/null 2>&1; then
 	fi
 fi
 
+# --- the three counters the verdict is made of -------------------------------
+# EXECUTED is bumped by a tier that actually ran over at least one file or
+# battery. SKIPS is bumped ONLY inside note_skipped, so a new skip path cannot
+# be added without the count following it - that was the old bug: the skip LIST
+# existed and was printed, and the verdict simply did not look at it.
 RED=0
+EXECUTED=0
+SKIPS=0
 SKIPPED=""
-note_skip() { SKIPPED="$SKIPPED  - $1 (tool missing: $2)
+note_skipped() { SKIPS=$((SKIPS+1)); SKIPPED="$SKIPPED  - $1 ($2)
 "; }
-note_notrun() { SKIPPED="$SKIPPED  - $1 (did not run: $2)
-"; }
+note_skip() { note_skipped "$1" "tool missing: $2"; }
+note_notrun() { note_skipped "$1" "did not run: $2"; }
+
+# ⛔ A tier that matched ZERO files verified nothing, and printing GREEN there
+# is the same lie in miniature - so it prints EMPTY instead. It is not a SKIP
+# (no tool was missing, nothing was prevented from running), so it does not fail
+# the run by itself; it just never counts as EXECUTED. That is what makes the
+# all-empty case - the one the git precondition above describes - fall out of
+# the verdict as a failure rather than as a pass.
+tier_status() {
+	if [ "$2" != 0 ]; then printf 'RED (%s)' "$2"
+	elif [ "$1" = 0 ]; then printf 'EMPTY (no tracked files)'
+	else printf 'GREEN'; fi
+}
+tier_ran() { [ "$1" != 0 ] && EXECUTED=$((EXECUTED+1)); return 0; }
 
 hr() { printf '%s\n' "------------------------------------------------------------"; }
 
@@ -86,8 +120,8 @@ if command -v node >/dev/null 2>&1; then
 		n=$((n+1))
 		node --check "$f" >/dev/null 2>&1 || { printf 'RED  node --check %s\n' "$f"; node --check "$f" 2>&1 | head -3; bad=$((bad+1)); }
 	done
-	printf 'T1 node --check    %3d file(s)  %s\n' "$n" "$([ "$bad" = 0 ] && echo GREEN || echo "RED ($bad)")"
-	RED=$((RED+bad))
+	printf 'T1 node --check    %3d file(s)  %s\n' "$n" "$(tier_status "$n" "$bad")"
+	RED=$((RED+bad)); tier_ran "$n"
 else
 	note_skip "T1 node --check" node
 	printf 'T1 node --check    SKIPPED (no node)\n'
@@ -100,8 +134,8 @@ if command -v bash >/dev/null 2>&1; then
 		n=$((n+1))
 		bash -n "$f" >/dev/null 2>&1 || { printf 'RED  bash -n %s\n' "$f"; bash -n "$f" 2>&1 | head -3; bad=$((bad+1)); }
 	done
-	printf 'T2 bash -n         %3d file(s)  %s\n' "$n" "$([ "$bad" = 0 ] && echo GREEN || echo "RED ($bad)")"
-	RED=$((RED+bad))
+	printf 'T2 bash -n         %3d file(s)  %s\n' "$n" "$(tier_status "$n" "$bad")"
+	RED=$((RED+bad)); tier_ran "$n"
 else
 	note_skip "T2 bash -n" bash
 	printf 'T2 bash -n         SKIPPED (no bash)\n'
@@ -119,8 +153,8 @@ if command -v python3 >/dev/null 2>&1; then
 		python3 -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read(), sys.argv[1])' "$f" >/dev/null 2>&1 \
 			|| { printf 'RED  python syntax %s\n' "$f"; python3 -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read(), sys.argv[1])' "$f" 2>&1 | tail -2; bad=$((bad+1)); }
 	done
-	printf 'T3 python syntax   %3d file(s)  %s\n' "$n" "$([ "$bad" = 0 ] && echo GREEN || echo "RED ($bad)")"
-	RED=$((RED+bad))
+	printf 'T3 python syntax   %3d file(s)  %s\n' "$n" "$(tier_status "$n" "$bad")"
+	RED=$((RED+bad)); tier_ran "$n"
 else
 	note_skip "T3 python syntax" python3
 	printf 'T3 python syntax   SKIPPED (no python3)\n'
@@ -139,8 +173,8 @@ if command -v python3 >/dev/null 2>&1; then
 		python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" >/dev/null 2>&1 \
 			|| { printf 'RED  json %s\n' "$f"; bad=$((bad+1)); }
 	done
-	printf 'T4 json.load       %3d file(s)  %s\n' "$n" "$([ "$bad" = 0 ] && echo GREEN || echo "RED ($bad)")"
-	RED=$((RED+bad))
+	printf 'T4 json.load       %3d file(s)  %s\n' "$n" "$(tier_status "$n" "$bad")"
+	RED=$((RED+bad)); tier_ran "$n"
 else
 	note_skip "T4 json.load" python3
 	printf 'T4 json.load       SKIPPED (no python3)\n'
@@ -154,6 +188,10 @@ fi
 # pass/fail only - going through it would let a battery that never ran read as a
 # pass, which is the one thing this script must never do.
 if [ "$QUICK" = "1" ]; then
+	# ⛔ Counted like any other skip, on purpose. --quick is the caller choosing a
+	# narrower run, and a narrower run is still a narrower run: it cannot be
+	# allowed to exit 0, or "pass the gate quickly" becomes the way past the gate.
+	note_skipped "T5 hook batteries" "--quick was passed"
 	printf 'T5 hook batteries  SKIPPED (--quick)\n'
 elif ! command -v bash >/dev/null 2>&1; then
 	note_skip "T5 hook batteries" bash
@@ -194,18 +232,39 @@ else
 			"$STATUS" "$asserts" \
 			"$([ "$skip" = 0 ] && echo '' || echo ", $skip of $n did NOT run")"
 		RED=$((RED+bad))
+		# The tier counts as executed only if at least one battery actually ran.
+		# Each battery that did not is already on the skip list via note_notrun,
+		# so the verdict refuses the run either way - this only stops an
+		# all-skipped tier from also claiming it checked something.
+		tier_ran "$((n-skip))"
 	fi
 fi
 
 hr
 if [ -n "$SKIPPED" ]; then
-	printf 'SKIPPED - these checks did NOT run, so this pass is narrower than it looks:\n%s' "$SKIPPED"
+	printf 'SKIPPED - these checks did NOT run, so this run is INCOMPLETE:\n%s' "$SKIPPED"
 fi
-if [ "$RED" = "0" ]; then
-	printf 'GREEN - syntax, config, and the hook behaviour the batteries cover. This\n'
-	printf '        repo has no typecheck, no linter and no build; none of that was\n'
-	printf '        checked because none exists. .ps1 and .md are not checked at all.\n'
-	exit 0
+
+# ⛔ THE VERDICT. Three gates, all three required for exit 0, in the order that
+# tells the caller the most useful thing first: nothing ran, then something
+# failed, then something was missed.
+if [ "$EXECUTED" = "0" ]; then
+	printf '⛔ NOTHING RAN - 0 tier(s) checked anything, %d skipped. This is not a\n' "$SKIPS"
+	printf '        pass, it is a gate that verified nothing. Do not push.\n'
+	exit 1
 fi
-printf '⛔ RED - %d check(s) failed. Do not push.\n' "$RED"
-exit 1
+if [ "$RED" != "0" ]; then
+	printf '⛔ RED - %d check(s) failed. Do not push.\n' "$RED"
+	exit 1
+fi
+if [ "$SKIPS" != "0" ]; then
+	printf '⛔ INCOMPLETE - %d executed, 0 failed, %d did NOT run. Not a pass: a gate\n' "$EXECUTED" "$SKIPS"
+	printf '        that exits 0 with a skip is a gate that can lie. Install what the\n'
+	printf '        list above names, or run without --quick, then verify again.\n'
+	exit 1
+fi
+printf 'GREEN - %d tier(s) executed, 0 failed, 0 skipped: syntax, config, and the\n' "$EXECUTED"
+printf '        hook behaviour the batteries cover. This repo has no typecheck, no\n'
+printf '        linter and no build; none of that was checked because none exists.\n'
+printf '        .ps1 and .md are not checked at all.\n'
+exit 0
