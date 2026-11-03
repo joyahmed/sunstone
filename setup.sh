@@ -1,0 +1,1263 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOME_DIR="${HOME:?}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+# ── Arguments ────────────────────────────────────
+#
+#   --memory-repo <v>, --memory-repo=<v>
+#                       your personal memory repo (any git repo you own): a git
+#                       URL or a local path
+#   --clone-to <v>, --clone-to=<v>
+#                       where to clone it when --memory-repo is a URL
+#                       (default: ~/.ai-memory, the path the hooks also try when
+#                       ~/.claude/ai-memory-path is missing). Ignored, with a
+#                       notice, when --memory-repo is a local path.
+#   --skip-memory       do not touch ~/.claude/ai-memory-path
+#   --skip-overlay      install this checkout's trees only; ignore any skills,
+#                       agents, commands, hooks, configs or settings.json the
+#                       personal repo carries in the same layout
+#   -h, --help
+#
+# The repo can also come from the SUNSTONE_MEMORY_REPO environment variable, or
+# from an interactive prompt when stdin is a terminal.
+
+usage() {
+  sed -n '/^# ── Arguments/,/^$/p' "$0" | sed -e '1d' -e 's/^# \{0,1\}//'
+  cat <<USAGE
+Examples:
+  bash setup.sh --memory-repo git@github.com:alice/my-memory.git
+  bash setup.sh --memory-repo=~/src/my-memory
+  bash setup.sh --memory-repo https://github.com/alice/my-memory --clone-to=~/src/my-memory
+  SUNSTONE_MEMORY_REPO=https://github.com/alice/my-memory bash setup.sh
+USAGE
+}
+
+MEMORY_REPO_SPEC="${SUNSTONE_MEMORY_REPO:-}"
+CLONE_TO=""
+SKIP_MEMORY=0
+SKIP_OVERLAY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --memory-repo)   [ $# -ge 2 ] || { echo "--memory-repo needs a value" >&2; exit 2; }
+                     MEMORY_REPO_SPEC="$2"; shift 2 ;;
+    --memory-repo=*) MEMORY_REPO_SPEC="${1#*=}"; shift ;;
+    --clone-to)      [ $# -ge 2 ] || { echo "--clone-to needs a value" >&2; exit 2; }
+                     CLONE_TO="$2"; shift 2 ;;
+    --clone-to=*)    CLONE_TO="${1#*=}"; shift ;;
+    --skip-memory)   SKIP_MEMORY=1; shift ;;
+    --skip-overlay)  SKIP_OVERLAY=1; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# ⛔ git is a hard dependency of every step that follows: the memory repo is
+# resolved with it, and the two guards are installed by pointing the GLOBAL
+# core.hooksPath at ~/.git-hooks. Checked here, before the banner, because a
+# missing git used to surface as a bare "git: command not found" halfway
+# through - after the hook files had already landed, which is exactly the
+# half-configured machine the ordering below is designed to prevent.
+if ! command -v git >/dev/null 2>&1; then
+  echo "! git is required and was not found on PATH; nothing has been installed." >&2
+  exit 1
+fi
+
+echo -e "${CYAN}========================================"
+echo " sunstone setup (Linux / macOS / WSL)"
+echo -e "========================================${NC}"
+echo ""
+
+# ── Helpers ──────────────────────────────────────
+
+# backup <path> [dest_dir] - copy an existing file or directory to
+# <path>.bak.<timestamp>, or into <dest_dir> when one is given.
+#
+# The destination matters for skills and nothing else. Every directory under a
+# skills root IS its registration, so a <name>.bak.<timestamp> left beside the
+# original is loaded as a SECOND, STALE skill - an outdated copy of a real one,
+# sitting in the live list a pick away from being used. It was found on the Mac
+# and on another machine (over a dozen backups across three roots there, some
+# weeks old, including a stale skill whose description no longer matched).
+# ⚠️ "A .bak beside a hook is inert" was TRUE and has stopped being true. It held
+# while nothing enumerated those directories; now tooling does - a relinker walks
+# the shipped hook dirs, a doctor walks the installed one - and every such tool
+# has to remember to filter `*.bak*` or it reports a dated backup as a broken
+# hook. One of them got that wrong on its first run and warned about three files
+# no machine executes. Inert clutter is not free once something reads the
+# directory: it becomes a filter every future reader must reinvent, silently, and
+# a stale copy a person can mistake for the real file. So backups land OUTSIDE
+# the directories that get walked.
+backup() {
+  # ${2:-} not $2: setup.sh runs under `set -u`, and install_copy calls this with
+  # one argument, so a bare $2 aborts the whole installer on the first backup.
+  local src="$1" dest_dir="${2:-}"
+  # Resolved at CALL time, not at definition time: CLAUDE_DIR is set further
+  # down this file, so a default computed up here would silently be "/backups".
+  [ -n "$dest_dir" ] || dest_dir="${BACKUP_DIR:-${CLAUDE_DIR:-$HOME/.claude}/backups}"
+  if [ -f "$src" ] || [ -d "$src" ]; then
+    local bak i=1 stem="$src"
+    if [ -n "$dest_dir" ]; then
+      mkdir -p "$dest_dir"
+      stem="$dest_dir/$(basename "$src")"
+    fi
+    bak="${stem}.bak.$(date +%Y%m%d_%H%M%S)"
+    # Unique even when the same file is replaced twice within one second.
+    while [ -e "$bak" ]; do bak="${stem}.bak.$(date +%Y%m%d_%H%M%S)-$i"; i=$((i + 1)); done
+    cp -r "$src" "$bak" 2>/dev/null || true
+    echo "  backed up: $src → $bak"
+  fi
+}
+
+# install_copy <src> <dst> - copy <src> over <dst>. An existing <dst> that
+# differs is backed up first; an identical one is left alone, so a re-run of
+# setup produces no backup clutter.
+install_copy() {
+  local src="$1" dst="$2"
+  if [ -e "$dst" ] && ! cmp -s "$src" "$dst"; then
+    backup "$dst"
+  fi
+  # A symlink left by an earlier LINK_CLAUDE_MD=1 run (below) is replaced by
+  # the copy, never written THROUGH: cp onto a link that points at <src>
+  # itself fails with "same file", and one that points elsewhere would
+  # overwrite that file instead of this destination.
+  [ -L "$dst" ] && rm -f "$dst"
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+}
+
+# install_link <src> <dst> - make <dst> a symlink to <src>, so editing the
+# live file IS editing the repo file (LINK_CLAUDE_MD=1 in sunstone.conf; the
+# two CLAUDE.md files only). A <dst> that already is that link is left alone.
+# Anything else there - the copy an earlier run made, a hand-written file, a
+# link elsewhere - is backed up first when its content differs from <src>,
+# then replaced by the link.
+install_link() {
+  local src="$1" dst="$2"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    cmp -s "$src" "$dst" || backup "$dst"
+    rm -f "$dst"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+  echo "  linked: $dst → $src"
+}
+
+# is_stale_subset <installed> <repo> - true when <installed> is a STRICT SUBSET
+# of <repo>: every line of <installed> also appears in <repo>, and <repo> has at
+# least one line <installed> lacks. That is precisely what a copy installed once
+# and never refreshed looks like, and it is the only shape that is safe to
+# replace without asking anybody - a file somebody EDITED has lines of its own,
+# which makes this false. Lines are compared as a set, not in order, so a
+# reordered file counts as edited rather than stale: the conservative answer.
+#
+# ⚠️ The same predicate is implemented as subset_of() in
+# claude-setup/scripts/install-doctor.sh. The two must agree, because the doctor
+# is what REPORTS a file as stale and this is what CONVERTS it; if they drifted
+# apart, the doctor would name files setup then refuses to touch, or worse.
+# awk rather than python3: the doctor already degrades to a warning when python3
+# is missing, and this predicate must never be the reason a conversion is skipped.
+#
+# ⛔ THIS PREDICATE ALONE IS NOT ENOUGH, AND THE FLEET PAID FOR IT. The subset
+# test only recognises staleness that ADDED lines. The moment an upstream commit
+# REMOVES or REWORDS lines, an un-refreshed copy holds lines the repo no longer
+# has and reads exactly like a local edit - so install_link_safe kept it, every
+# run, forever. Measured, not theorised: ~/.claude/commands/supermode.md sat at
+# 126 lines against a 131-line canonical on a Mac through two byte-identical
+# setup runs (only moving the copy aside by hand let the third one link it), and
+# one Ubuntu box reported commands 0/8 and skills 0/45 linked with LINK_COMMANDS
+# and LINK_SKILLS both set - setup reporting success over a tree of stale copies,
+# while drift-check.sh correctly called it drifted. Two tools, opposite verdicts,
+# and the box looked installed.
+# So the history test install-doctor.sh wraps around its copy of this predicate
+# (stale_copy) now lives here too, as is_old_release() + is_old_copy() below -
+# beside this function, which is what the doctor's comment asked for. The two
+# files still agree about what a SUBSET is (this function stays byte-identical to
+# subset_of() there) and now also about what an OLD COPY is.
+# ⚠️ What used to make the history test too dangerous for this side was that
+# this script CONVERTS: a wrong "stale" replaced a person's file with a symlink,
+# where the doctor only misreported it. That is no longer the trade, because the
+# other half of this change removed the destructive outcome from BOTH answers -
+# install_link_safe backs a diverged file up and names the backup instead of
+# either keeping it (which is how a box stays stale) or deleting it.
+is_stale_subset() {
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  # ⛔ A repo file with ZERO lines would make awk's FNR==NR test true for the
+  # FIRST record of the second file too (FNR and NR are both 1 when the first
+  # file had no records), so the installed file's lines would be loaded as the
+  # repo's and every comparison below would be against itself. Refuse here.
+  [ -s "$2" ] || return 1
+  awk '
+    FNR==NR { repo[$0]=1; next }
+    { inst[$0]=1; if (!($0 in repo)) extra++ }
+    END {
+      for (l in repo) if (!(l in inst)) missing++
+      exit (extra+0 == 0 && missing+0 > 0) ? 0 : 1
+    }
+  ' "$2" "$1"
+}
+
+# is_old_release <installed> <repo-file> - true when <installed> is an OLD
+# RELEASE of ours rather than somebody's edit, decided by asking git instead of
+# guessing from line sets: does this content equal a past version of that repo
+# path, in EITHER source root? Whichever lines came or went in between.
+#
+# ⛔ EVERY CANDIDATE ROOT, NOT ONLY THE ONE THAT SHIPS THE FILE TODAY. ship()
+# resolves a name to the LAST root that carries it, and which root that is has
+# changed over time: a file installed from the framework can be shipped by the
+# personal overlay now. Searching only today's winner would report an old release
+# of the other root as content nobody ever shipped - the same false verdict this
+# test exists to remove, one level up.
+#
+# ⭐ BLOB IDS, NOT TEXT: `git hash-object --path=<repo-relative path>` against
+# each <commit>:<path> object id, so git's own clean filter decides line endings
+# (a CRLF working copy on a core.autocrlf checkout hashes to the LF blob for
+# free) and the whole history resolves in ONE cat-file --batch-check. The one
+# retry with \r bytes removed covers the other case - a CRLF copy on a mounted
+# Windows drive against an LF checkout - and cannot manufacture a false match:
+# dropping \r can only collapse contents that differ in nothing but \r.
+#
+# ⭐ TWO TIERS, deliberately not distinguished HERE. The path-scoped walk answers
+# "is this an old release of THIS path"; a bare `cat-file -e` on the blob id
+# answers the weaker "did this content ever exist in this repo" (it survives a
+# rename, a branch, or history the cap did not reach). install-doctor.sh reports
+# them on separate lines because a reader deserves to know which one answered;
+# this script only has one thing to do with either answer - link the file - so it
+# returns on the first of them that says yes.
+#
+# ⛔ BOUNDED, and a cap reached without a match is NOT "diverged": it means this
+# run did not look that far back, and install_link_safe's diverged branch keeps
+# the content (backed up and named) rather than destroying it, which is what
+# makes an honest "did not find it" affordable here.
+is_old_release() {
+  local inst="$1" src="$2" cap="${SETUP_HISTORY_CAP:-50}" rel="" root top pfx blobs ids id
+  command -v git >/dev/null 2>&1 || return 1
+  [ -f "$inst" ] && [ -f "$src" ] || return 1
+  # The key the search uses: <repo-file> relative to the root it came from. The
+  # personal overlay first, the same precedence ship() gives it.
+  for root in "${OVERLAY_ROOT:-}" "$SCRIPT_DIR"; do
+    [ -n "$root" ] || continue
+    case "$src" in "$root"/*) rel="${src#"$root"/}"; break ;; esac
+  done
+  [ -n "$rel" ] || return 1
+  for root in "${OVERLAY_ROOT:-}" "$SCRIPT_DIR"; do
+    [ -n "$root" ] && [ -d "$root" ] || continue
+    # Ask git for the path rather than assembling one by string surgery: a root
+    # that is a SUBDIRECTORY of a larger checkout, or reached through a symlinked
+    # temp dir, is spelled differently by git than by the caller.
+    top=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) || continue
+    [ -n "$top" ] || continue
+    pfx=$(git -C "$root" rev-parse --show-prefix 2>/dev/null) || pfx=""
+    ids=$(git -C "$top" hash-object --path="$pfx$rel" -- "$inst" 2>/dev/null) || ids=""
+    if ! LC_ALL=C tr -d '\r' < "$inst" | cmp -s - "$inst"; then
+      id=$(LC_ALL=C tr -d '\r' < "$inst" | git -C "$top" hash-object --path="$pfx$rel" --stdin 2>/dev/null) || id=""
+      [ -n "$id" ] && ids="$ids $id"
+    fi
+    [ -n "$ids" ] || continue
+    blobs=$(git -C "$top" log --format='%H' --max-count="$cap" -- "$pfx$rel" 2>/dev/null \
+            | awk -v r=":$pfx$rel" '{ print $0 r }' \
+            | git -C "$top" cat-file --batch-check 2>/dev/null \
+            | awk '$2 == "blob" { print $1 }') || blobs=""
+    for id in $ids; do
+      printf '%s\n' "$blobs" | grep -qxF "$id" && return 0
+      git -C "$top" cat-file -e "$id" 2>/dev/null && return 0
+    done
+  done
+  return 1
+}
+
+# is_old_copy <installed> <repo-file> - "this is only an out-of-date copy of
+# ours, nobody's work is in it". The setup-side twin of stale_copy() in
+# install-doctor.sh, and the same order for the same reason: the subset test is
+# awk over two files and costs the repo nothing, so it runs first; the history
+# test is what catches the shape it cannot see (a commit that removed lines).
+is_old_copy() {
+  is_stale_subset "$1" "$2" || is_old_release "$1" "$2"
+}
+
+# install_link_safe <src> <dst> - install_link that NEVER discards something a
+# person may have written, and never LEAVES A STALE COPY behind either. <dst>
+# becomes the link in every case; what differs is what happens to what was there:
+#
+#   absent / already that link → link it (or nothing at all). Silent.
+#   identical, stale subset, or
+#   an old release of ours      → removed and linked. NO backup: is_old_copy has
+#                                proved nobody's work is in it, and a .bak per
+#                                replaceable copy is litter this installer would
+#                                mint on the one run that repairs the box.
+#   a link pointing ELSEWHERE   → relinked at <src>. Only the link is removed,
+#                                so whatever it pointed at is untouched.
+#   anything else (DIVERGED)    → backed up FIRST, named loudly with the path of
+#                                the backup, and then linked.
+#
+# ⛔ THAT LAST LINE IS A CHANGE OF ANSWER, and the reason is in the ⛔ block
+# above is_old_release: "keep it and name it" is how a box stays on a stale copy
+# for months. Keeping the copy is not the only way to not lose it - setting it
+# aside where the output names it is - and one of those two also gets the machine
+# onto the current file. The invariant that holds is the one that matters: a file
+# that is not provably ours is never DESTROYED.
+#
+# Used for commands and skills rather than install_link, because those are the
+# files people most often tweak in place - unlike a hook or a CLAUDE.md, a slash
+# command is a text file that invites a local edit. install_link's own answer
+# (back up anything that differs, including a copy of ours) is right for a hook
+# and wrong here, which is why the removal happens in this function.
+install_link_safe() {
+  local src="$1" dst="$2"
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+    # A link is judged as a link, not by the content it happens to reach: only
+    # a REGULAR file at $dst can hold somebody's edit that removing it loses.
+    if [ ! -L "$dst" ] && ! cmp -s "$src" "$dst" && ! is_old_copy "$dst" "$src"; then
+      echo -e "  ${YELLOW}! $dst differs from $src by more than being out of date - SET ASIDE, not lost, and replaced by a link:${NC}"
+      backup "$dst"
+      echo    "    diff that backup against $src; anything of yours in it has to be put back by hand."
+    fi
+    # Removed HERE rather than in install_link, so the replaceable cases (an
+    # identical copy, an old release of ours) leave no .bak behind: install_link
+    # backs up anything whose content differs, which for those is clutter minted
+    # by the very run that repairs the box.
+    rm -f "$dst"
+  fi
+  install_link "$src" "$dst"
+}
+
+# install_copy_safe <src> <dst> - install_copy for a file people edit in place.
+# The COPY-side twin of install_link_safe, and it exists because the two halves
+# of the same decision had opposite answers:
+#
+#   LINK_COMMANDS=1  (opt-in)  → install_link_safe: a diverged file is KEPT and
+#                                named, because a slash command invites a local
+#                                edit and a backup nobody reads is not consent.
+#   the default      (copies)  → install_copy: a diverged file was BACKED UP AND
+#                                OVERWRITTEN, every run, silently.
+#
+# So the careful path was the one you had to opt into, and the default clobbered.
+# ⛔ That is the half of the commands-drift defect a link key cannot reach: the
+# keys are off by default, so the machine that never sets one is exactly the
+# machine that both drifts AND loses a hand edit when somebody finally re-runs
+# setup. Five answers, and only one of them writes:
+#
+#   absent        → plain copy. The normal install; prints nothing, as before.
+#   identical     → nothing at all. No backup, no line, no clutter on a re-run.
+#   stale subset  → REFRESHED (backed up first). is_stale_subset proves the live
+#                   file holds no line of its own, i.e. it is an old copy of ours
+#                   and nobody's work is in it. This is the migration the drift
+#                   needed: three of six commands on one box were this shape.
+#   diverged      → kept, named on stdout with the diff to run. Never replaced.
+#   symlink       → skipped ENTIRELY, whatever it points at. A link already
+#                   tracks its source, so there is nothing to refresh; and
+#                   converting it back to a copy would re-create the drift this
+#                   whole mechanism exists to end. (install_copy removes a link
+#                   and copies over it, which is right for a hook - the mode is
+#                   the framework's choice there - and wrong for a command,
+#                   where the link IS the user's LINK_COMMANDS=1 answer.) A link
+#                   pointing somewhere unexpected is install-doctor's to report;
+#                   this function must not be the thing that quietly undoes it.
+#
+# ⚠️ The backup goes where backup() puts it - ~/.claude/backups, OUTSIDE
+# ~/.claude/commands - and that is not tidiness: a <name>.md.bak.<stamp> left in
+# the commands directory REGISTERS AS A SLASH COMMAND, an out-of-date one, one
+# pick away from being used. Same rule step_skills follows for the same reason.
+install_copy_safe() {
+  local src="$1" dst="$2"
+  # Before -e: a BROKEN link is still the user's link, and -e is false for one.
+  if [ -L "$dst" ]; then return 0; fi
+  if [ -e "$dst" ]; then
+    cmp -s "$src" "$dst" && return 0
+    if ! is_stale_subset "$dst" "$src"; then
+      echo -e "  ${YELLOW}! kept $dst as it is: it differs from the repo copy by more than being out of date, so it was NOT refreshed.${NC}"
+      echo    "    diff it against $src and delete it if the local changes are not wanted."
+      return 0
+    fi
+    backup "$dst"
+    rm -f "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "  refreshed: $dst (an old copy of $src, with no local edits in it)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+}
+
+# skill_tree_stale <installed-dir> <repo-dir> - the tree twin of is_old_copy,
+# and the question is the same one: is this only an old copy of ours? True when
+# every regular file under <installed-dir> is either identical to its counterpart
+# in <repo-dir>, or an old copy of it (a stale subset, or a past version of that
+# path in either root). A file the repo does not ship AT ALL makes it false -
+# that file is the user's, and a skill is replaced whole, so linking over it
+# would be the destructive case.
+skill_tree_stale() {
+  local dst="$1" src="$2" f rel
+  [ -d "$dst" ] || return 0
+  for f in $(find "$dst" -type f 2>/dev/null); do
+    rel="${f#"$dst"/}"
+    [ -f "$src/$rel" ] || return 1
+    if cmp -s "$src/$rel" "$f"; then continue; fi
+    is_old_copy "$f" "$src/$rel" || return 1
+  done
+  return 0
+}
+
+# link_skill_safe <repo-skill-dir> <dst> - make <dst> a symlink to the repo's
+# skill directory, so a `git pull` updates the skill on this machine. A diverged
+# tree is set aside and named rather than kept in place, exactly as
+# install_link_safe does for a single file - and a tree is ALWAYS backed up
+# first, old copy of ours or not, because this is the one place in this script
+# that removes a directory.
+link_skill_safe() {
+  local src="$1" dst="$2"
+  if [ -L "$dst" ]; then
+    if [ "$(readlink "$dst")" = "$src" ]; then return 0; fi
+    rm -f "$dst"
+  elif [ -d "$dst" ]; then
+    if ! skill_tree_stale "$dst" "$src"; then
+      echo -e "  ${YELLOW}! $dst is not merely an out-of-date copy of $src - SET ASIDE, not lost, and replaced by a link:${NC}"
+      echo    "    diff the backup below against $src; anything of yours in it has to be put back by hand."
+    fi
+    # Backed up even when skill_tree_stale proved it is only an old copy of
+    # ours: a skill is a tree and this removes a directory, which is the one
+    # thing in this script that must never be undoable. ...OUTSIDE the skills
+    # root, or the backup registers as a second skill - the same rule
+    # step_skills follows.
+    # ⚠️ ...but NOT when the tree is byte-for-byte what the repo ships, which is
+    # what a box being converted from copies to links mostly holds: there is
+    # nothing to undo, and a .bak per skill would be dozens of directories minted
+    # by the run that repaired the box. Same `diff -rq` rule step_skills uses to
+    # keep a re-run clutter-free.
+    if ! diff -rq "$src" "$dst" >/dev/null 2>&1; then
+      backup "$dst" "$(dirname "$(dirname "$dst")")/skill-backups"
+    fi
+    rm -rf "${dst:?}"
+  elif [ -e "$dst" ]; then
+    backup "$dst"
+    rm -f "$dst"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+  echo "  linked: $dst → $src"
+}
+
+# install_file <src> <dst> - install_copy, then mark <dst> executable.
+#
+# With LINK_HOOKS=1 in sunstone.conf it links instead, exactly as LINK_CLAUDE_MD
+# does for the two CLAUDE.md files. That is the difference between a fix reaching
+# a machine on `git pull` and a fix sitting in this repo until somebody re-runs
+# setup on every box - which is how ai-memory-sync.sh stayed dead here for a day
+# after it had already been repaired upstream, with every session in the meantime
+# telling its user the memory was missing. Copies are still the default: a link
+# makes the live hook editable through the repo, which is not what every machine
+# wants. This is setup.sh, so POSIX is a given; setup.ps1 keeps copies on Windows.
+# The personal repo is resolved here rather than taken from $MEMORY_REPO, because
+# --skip-memory leaves that empty and the key would then be silently ignored -
+# which is exactly the failure this whole change exists to stop.
+install_file() {
+  local repo="$MEMORY_REPO"
+  [ -n "$repo" ] || repo="$(read_path_file "$HOME_DIR/.claude/ai-memory-path")"
+  if [ -n "$repo" ] && [ "$(conf_get "$repo" LINK_HOOKS "")" = "1" ]; then
+    install_link "$1" "$2"
+  else
+    install_copy "$1" "$2"
+    chmod +x "$2"
+  fi
+}
+
+# read_path_file <file> - the first line of a one-line path file, TRIMMED (a
+# path may contain spaces, so whitespace is never squeezed out of it). Prints
+# nothing when the file is missing.
+read_path_file() {
+  [ -f "$1" ] || return 0
+  head -n1 "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+# is_git_url <spec> - true for scheme://... and for the scp form, which must
+# START with user@host: (the same rule setup.ps1 applies; a local directory
+# named "a@b:c" deep in a path is not a URL).
+is_git_url() {
+  case "$1" in *://*) return 0 ;; esac
+  printf '%s' "$1" | grep -qE '^[^/\\]+@[^/\\]+:'
+}
+
+# Read one KEY from <personal-repo>/claude-setup/config/sunstone.conf.
+# Source-free on purpose: the file is user content, so it is grepped, never
+# executed. Prints the default when the file or the key is absent. Same rules
+# as the hooks: last matching line wins, leading whitespace allowed, a '#'
+# starts a comment only at line start or after whitespace (so a bare '#' inside
+# a value or a double-quoted value is kept), surrounding double quotes are
+# stripped, whitespace is trimmed (never deleted from inside a value).
+conf_get() {
+  local repo="$1" key="$2" default="$3" file val
+  file="$repo/claude-setup/config/sunstone.conf"
+  val=""
+  if [ -f "$file" ]; then
+    # Byte-for-byte the body of conf_get in claude-setup/config/hooks/
+    # ai-memory-sync.sh: the two must agree or setup's closing summary names a
+    # different memory file than the hook actually injects. Leading whitespace
+    # is kept until the comment rule has run - KEY=#x is the value "#x", while
+    # KEY= #x is a comment (empty → the default) - and a quoted value runs to
+    # the next '"', so anything after the closing quote is ignored.
+    val="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" 2>/dev/null | tail -n1 \
+           | sed -e "s/^[[:space:]]*${key}[[:space:]]*=//" -e 's/[[:space:]]*$//')"
+    case "$(printf '%s' "$val" | sed 's/^[[:space:]]*//')" in
+      \"*) val="$(printf '%s' "$val" | sed -e 's/^[[:space:]]*"//' -e 's/".*$//')" ;;
+      *)   val="$(printf '%s' "$val" | sed -e 's/[[:space:]]#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" ;;
+    esac
+  fi
+  if [ -n "$val" ]; then printf '%s\n' "$val"; else printf '%s\n' "$default"; fi
+}
+
+# ~/.claude/settings.json is edited by merge scripts several times in one run.
+# snapshot_settings prints the path of a fresh backup (unique even within one
+# second); settle_settings_backup removes it again when the merge turned out
+# to be a no-op, and otherwise says where it is.
+CLAUDE_DIR="$HOME_DIR/.claude"
+SETTINGS="$CLAUDE_DIR/settings.json"
+MERGER="$SCRIPT_DIR/claude-setup/config/merge-settings-template.py"
+MERGER_JS="$SCRIPT_DIR/claude-setup/config/merge-settings-template.mjs"
+# Whether the user had a settings.json before this run. The hook registration
+# below creates one, so without this flag the template merge that follows would
+# "back up" a file the user never wrote - a .bak of an intermediate state
+# nobody would ever want restored.
+SETTINGS_PREEXISTED=0
+[ -f "$SETTINGS" ] && SETTINGS_PREEXISTED=1
+snapshot_settings() {
+  [ -f "$SETTINGS" ] || return 0
+  local b i=1
+  b="$SETTINGS.bak.$(date +%Y%m%d_%H%M%S)"
+  while [ -e "$b" ]; do b="$SETTINGS.bak.$(date +%Y%m%d_%H%M%S)-$i"; i=$((i + 1)); done
+  cp "$SETTINGS" "$b"
+  printf '%s\n' "$b"
+}
+settle_settings_backup() {
+  [ -n "${1:-}" ] || return 0
+  if cmp -s "$SETTINGS" "$1"; then rm -f "$1"; else echo "  backed up: $SETTINGS → $1"; fi
+}
+
+
+# ── Personal memory repo (resolved FIRST) ─────────
+# Records the PERSONAL memory repo's path in ~/.claude/ai-memory-path so the
+# SessionStart hook can pull it and inject its memory file into Claude on any
+# machine. The personal repo is any git repo you own; this framework repo holds
+# only the hooks.
+#
+# ⛔ This step runs before anything else is written. A typo in --memory-repo or
+# a failed clone (no SSH key for a git@ URL, say) exits 1 here, with the global
+# git config, ~/.git-hooks and ~/.claude untouched - so "setup stopped" means
+# "nothing landed", and there is nothing to roll back. Earlier versions
+# installed the git hooks first, and a failure left a half-configured machine
+# with no message saying so.
+
+echo -e "${CYAN}Resolving the personal memory repo...${NC}"
+PATH_FILE="$HOME_DIR/.claude/ai-memory-path"
+MEMORY_REPO=""
+CLONE_TO_USED=0
+
+# 1) Decide which personal repo to use: flag/env, else prompt on a TTY.
+if [ "$SKIP_MEMORY" = "1" ]; then
+  echo "  --skip-memory: leaving $PATH_FILE untouched"
+elif [ -z "$MEMORY_REPO_SPEC" ]; then
+  current="$(read_path_file "$PATH_FILE")"
+  # [ -e ] not [ -d ]: in a worktree .git is a file. Same test as the hooks.
+  [ -n "$current" ] && [ -e "$current/.git" ] || current=""
+  if [ -t 0 ]; then
+    # Ask whenever stdin is a terminal, even with stdout piped (the prompt then
+    # goes to stderr so it still reaches the screen).
+    if [ -n "$current" ]; then
+      prompt="  Personal memory repo (git URL or local path) [$current]: "
+    else
+      prompt="  Personal memory repo (git URL or local path) [Enter to skip]: "
+    fi
+    if [ -t 1 ]; then printf '%s' "$prompt"; else printf '%s' "$prompt" >&2; fi
+    read -r MEMORY_REPO_SPEC || true
+    [ -n "$MEMORY_REPO_SPEC" ] || MEMORY_REPO_SPEC="$current"
+  else
+    MEMORY_REPO_SPEC="$current"
+    if [ -n "$current" ]; then
+      echo "  no --memory-repo given; keeping existing $PATH_FILE → $current"
+    else
+      echo "  no --memory-repo given and no terminal to ask on; skipping."
+      echo "  re-run with:  bash setup.sh --memory-repo <git-url-or-path>"
+    fi
+  fi
+fi
+
+# 2) Resolve it: a local path is used in place; a URL is cloned into --clone-to,
+#    or by default into ~/.ai-memory - the one path every hook also tries when
+#    ~/.claude/ai-memory-path is missing, so a lost path file still finds it.
+#    An existing clone at the destination is reused.
+#
+#    --skip-memory short-circuits the whole block, MEMORY_REPO_SPEC or not: the
+#    flag promises the path file is left alone, and SUNSTONE_MEMORY_REPO being
+#    exported in the environment must not quietly break that promise (it used
+#    to - the spec was resolved, cloned and written one line after the script
+#    said it would not touch anything). setup.ps1 keeps the same shape.
+if [ "$SKIP_MEMORY" != "1" ] && [ -n "$MEMORY_REPO_SPEC" ]; then
+  if is_git_url "$MEMORY_REPO_SPEC"; then
+    CLONE_TO_USED=1
+    dest="${CLONE_TO:-$HOME_DIR/.ai-memory}"
+    dest="${dest/#\~/$HOME_DIR}"
+    if [ -e "$dest/.git" ]; then
+      echo "  using existing clone: $dest"
+    elif [ -e "$dest" ]; then
+      echo -e "  ${RED}! $dest exists but is not a git repo; pass --clone-to <dir> or remove it${NC}"
+      echo "  nothing has been installed."
+      exit 1
+    else
+      echo "  cloning $MEMORY_REPO_SPEC → $dest"
+      if ! git clone --quiet "$MEMORY_REPO_SPEC" "$dest"; then
+        echo -e "  ${RED}! clone of $MEMORY_REPO_SPEC failed${NC}"
+        echo "  a git@host: URL needs an SSH key registered with the host; an https:// URL"
+        echo "  needs no key for a public repo. Nothing has been installed."
+        exit 1
+      fi
+    fi
+    MEMORY_REPO="$(cd "$dest" && pwd)"
+  else
+    spec="${MEMORY_REPO_SPEC/#\~/$HOME_DIR}"
+    if [ ! -d "$spec" ]; then
+      echo -e "  ${RED}! $spec is not a directory (and does not look like a git URL)${NC}"
+      echo "  nothing has been installed."
+      exit 1
+    fi
+    MEMORY_REPO="$(cd "$spec" && pwd)"
+    if ! git -C "$MEMORY_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+      echo -e "  ${RED}! $MEMORY_REPO is not a git repository; the sync hook needs one${NC}"
+      echo "  nothing has been installed."
+      exit 1
+    fi
+  fi
+  mkdir -p "$HOME_DIR/.claude"
+  printf '%s\n' "$MEMORY_REPO" > "$PATH_FILE"
+  echo "  ai-memory-path → $MEMORY_REPO"
+fi
+if [ -n "$CLONE_TO" ] && [ "$CLONE_TO_USED" != "1" ]; then
+  echo "  ignored: --clone-to only applies to a URL"
+fi
+echo "  ok"
+echo ""
+
+# ── Global git hooks (memory staging guard + force-push guard) ─────
+#
+# ⛔ `init.templateDir` alone does NOT reach existing repos. Templates are
+# copied at `git init` / `git clone` only, so every repo that already exists is
+# untouched. `core.hooksPath` is the setting that reaches existing repos too,
+# which is why it is used; the template is kept in step only as a fallback if
+# core.hooksPath is ever unset by hand.
+#
+# ⚠️ **A repo-local `core.hooksPath` overrides the global one completely** -
+# git does not merge them, and there is no chaining at that level. A repo that
+# sets its own hooks directory is not reached by the global setting; the files
+# have to be copied into that directory as well. **Any coverage check that
+# reads `.git/hooks` is wrong** - resolve each repo's effective hooks dir
+# instead, or you will report gaps that do not exist and miss ones that do.
+#
+# ⚠️ The source of truth is claude-setup/config/git-hooks/* in this repo; the
+# live copies are ~/.git-hooks/*. **Pulling this repo does not update the live
+# copies** - re-run setup.sh after a pull that touches a hook.
+#
+# WHICH hooks land is not decided here. The files are installed per install
+# root by step_git_hooks, exactly like every other tree, so the personal repo
+# can ship guards of its own and can override a shipped one by carrying the
+# same filename. This section only prepares the directories and points git at
+# them - a one-time global setting, not a per-root one.
+#
+# The framework itself ships only the two conf-driven guards, pre-commit and
+# pre-push. Anything opinionated about commit CONTENT - a message
+# rewriter, a template, a linter - belongs in a personal repo rather than
+# in a framework other people install: carrying the file there IS the opt-in,
+# which is why there is no flag to gate it with.
+echo -e "${CYAN}Preparing global git hooks (memory staging guard + force-push guard)...${NC}"
+mkdir -p "$HOME_DIR/.git-hooks" "$HOME_DIR/.git-templates/hooks"
+
+# ⛔ ~/.git-templates/hooks must stay EMPTY - see step_git_hooks for why a hook
+# copied there fork-bombs every fresh clone. The hook files themselves are
+# removed per name as each root installs; these are the backups an older
+# setup.sh left beside them, which git would copy into a clone just the same.
+rm -f "$HOME_DIR/.git-templates/hooks/"*.bak.* 2>/dev/null || true
+
+# Record whatever global git config is about to be replaced, so an uninstall
+# can restore it rather than only unset it.
+PREV_GIT_CONFIG="$HOME_DIR/.claude/git-config.previous"
+record_previous() {
+  local key="$1" want="$2" old
+  old="$(git config --global --get "$key" 2>/dev/null || true)"
+  if [ -n "$old" ] && [ "$old" != "$want" ]; then
+    mkdir -p "$HOME_DIR/.claude"
+    printf '%s=%s\n' "$key" "$old" >> "$PREV_GIT_CONFIG"
+    echo -e "  ${RED}! global $key was '$old'; replacing it (old value recorded in $PREV_GIT_CONFIG)${NC}"
+  fi
+}
+record_previous core.hooksPath "$HOME_DIR/.git-hooks"
+record_previous init.templateDir "$HOME_DIR/.git-templates"
+git config --global core.hooksPath "$HOME_DIR/.git-hooks"
+git config --global init.templateDir "$HOME_DIR/.git-templates"
+echo "  core.hooksPath: $(git config --global --get core.hooksPath)"
+echo "  ok"
+echo ""
+
+# ── Session hooks (memory sync / commit / doctor notice) ─────
+# Independent of the repo choice, so a later `--memory-repo` run only has to
+# write the path file.
+echo -e "${CYAN}Installing portable AI-memory sync...${NC}"
+mkdir -p "$HOME_DIR/.claude/hooks"
+install_file "$SCRIPT_DIR/claude-setup/config/hooks/ai-memory-sync.sh" "$HOME_DIR/.claude/hooks/ai-memory-sync.sh"
+# The write half of sync: SessionEnd commits memory (no network), SessionStart
+# pushes it on the next run. Split that way so ending a session is never slower.
+install_file "$SCRIPT_DIR/claude-setup/config/hooks/ai-memory-commit.sh" "$HOME_DIR/.claude/hooks/ai-memory-commit.sh"
+# The doctor notice: one throttled line from `memory-doctor --brief` at
+# SessionStart, nothing when the stores are clean. It runs memory-doctor.js
+# from THIS checkout, located through ~/.claude/sunstone-path (the hook itself
+# is a copy, so its own location says nothing).
+install_file "$SCRIPT_DIR/claude-setup/config/hooks/memory-doctor-notice.sh" "$HOME_DIR/.claude/hooks/memory-doctor-notice.sh"
+printf '%s\n' "$SCRIPT_DIR" > "$HOME_DIR/.claude/sunstone-path"
+# Register the SessionStart + SessionEnd hooks in ~/.claude/settings.json
+# (idempotent, non-destructive: existing entries are kept). The file is backed
+# up first; the backup is dropped again if the merge turned out to be a no-op.
+# Every path is double-quoted inside the command: a home directory with a
+# space in it must still run.
+MERGE_HOOK="$SCRIPT_DIR/claude-setup/config/merge-ai-memory-hook.py"
+HOOK_SYNC_CMD="bash \"$HOME_DIR/.claude/hooks/ai-memory-sync.sh\""
+HOOK_DOCTOR_CMD="bash \"$HOME_DIR/.claude/hooks/memory-doctor-notice.sh\""
+HOOK_COMMIT_CMD="bash \"$HOME_DIR/.claude/hooks/ai-memory-commit.sh\""
+print_manual_hooks() {
+  echo "  add these to $SETTINGS by hand:"
+  echo "      SessionStart: $HOOK_SYNC_CMD"
+  echo "      SessionStart: $HOOK_DOCTOR_CMD"
+  echo "      SessionEnd:   $HOOK_COMMIT_CMD   (async)"
+}
+if command -v python3 >/dev/null 2>&1; then
+  settings_bak="$(snapshot_settings)"
+  merge_ok=1
+  # One call per hook; the third argument only labels the log line.
+  python3 "$MERGE_HOOK" "$SETTINGS" "$HOOK_SYNC_CMD" ai-memory-sync || merge_ok=0
+  python3 "$MERGE_HOOK" "$SETTINGS" "$HOOK_DOCTOR_CMD" memory-doctor-notice || merge_ok=0
+  settle_settings_backup "$settings_bak"
+  if [ "$merge_ok" = "1" ]; then
+    echo "  ok"
+  else
+    echo -e "  ${RED}! could not auto-register the hooks; $SETTINGS may be incomplete${NC}"
+    print_manual_hooks
+  fi
+else
+  echo "  ! python3 not found;"
+  print_manual_hooks
+fi
+echo ""
+
+# ── Install roots: this checkout, then the personal repo (the overlay) ─────
+#
+# The personal memory repo MAY carry the same relative layout as this checkout
+# - skills/, agents/, config/, plugins/, claude-setup/commands/,
+# claude-setup/config/{agents,hooks,settings.json,CLAUDE.global.md} - and it is
+# then applied as a SECOND install root, after this one, with identical rules.
+# Whatever both roots ship, the personal copy lands last and wins. This
+# checkout may ship none of these trees (the framework carries no skills, and
+# only the /supercode command); then only the personal root contributes. --skip-overlay applies
+# this checkout only.
+#
+# Each step is one function taking the root as its argument; it prints
+# "<step>: from <root>" or "<step>: skipped" and records what it installed for
+# the summary at the end.
+
+# The overlay root: the repo resolved above, or - with --skip-memory or when
+# nothing was passed and no terminal asked - the repo already recorded in
+# ~/.claude/ai-memory-path (or ~/.ai-memory, the hooks' own fallback).
+OVERLAY_ROOT=""
+if [ "$SKIP_OVERLAY" != "1" ]; then
+  if [ -n "$MEMORY_REPO" ]; then
+    OVERLAY_ROOT="$MEMORY_REPO"
+  else
+    # Canonicalised before the guard below can compare it: the recorded path is
+    # user-editable, so a trailing slash or a symlinked spelling of THIS
+    # checkout would otherwise slip past a raw string comparison and the
+    # framework would be installed twice, once as each root. `cd && pwd` is
+    # what setup.ps1's Resolve-Path does.
+    OVERLAY_ROOT="$(read_path_file "$PATH_FILE")"
+    if [ -n "$OVERLAY_ROOT" ] && [ -d "$OVERLAY_ROOT" ]; then
+      OVERLAY_ROOT="$(cd "$OVERLAY_ROOT" && pwd)"
+    else
+      OVERLAY_ROOT=""
+    fi
+    [ -z "$OVERLAY_ROOT" ] && [ -e "$HOME_DIR/.ai-memory/.git" ] && OVERLAY_ROOT="$HOME_DIR/.ai-memory"
+  fi
+  # The memory repo IS this checkout: one root, not the same one twice.
+  [ "$OVERLAY_ROOT" = "$SCRIPT_DIR" ] && OVERLAY_ROOT=""
+fi
+
+# ── Keys in sunstone.conf that change how setup itself installs ─────
+# Read from the memory repo resolved above, or from the one already recorded
+# when this run was told to leave it alone (--skip-memory, --skip-overlay).
+#
+# LINK_CLAUDE_MD=1: ~/.claude/CLAUDE.md and ~/CLAUDE.md are installed as
+# SYMLINKS to their repo sources rather than as copies, so editing the live
+# file is editing the repo file and git status says so - the drift that
+# memory-doctor's `drift` check otherwise reports cannot happen. POSIX only:
+# setup.ps1 ignores the key (a symlink on Windows needs Developer Mode or an
+# elevated shell), and the doctor covers the copies there. Off by default:
+# a link into a checkout is a surprise on a machine that later moves it.
+CONF_REPO="${MEMORY_REPO:-$OVERLAY_ROOT}"
+if [ -z "$CONF_REPO" ]; then
+  CONF_REPO="$(read_path_file "$PATH_FILE")"
+  [ -n "$CONF_REPO" ] && [ -d "$CONF_REPO" ] || CONF_REPO=""
+fi
+CLAUDE_MD_MODE=""
+if [ -n "$CONF_REPO" ] && [ "$(conf_get "$CONF_REPO" LINK_CLAUDE_MD "")" = "1" ]; then
+  CLAUDE_MD_MODE="l"
+  echo "  LINK_CLAUDE_MD=1: ~/CLAUDE.md and ~/.claude/CLAUDE.md will be symlinks to their repo sources"
+  echo ""
+fi
+
+# LINK_COMMANDS=1 / LINK_SKILLS=1: the twins of LINK_HOOKS, for ~/.claude/commands
+# and ~/.claude/skills.
+#
+# ⛔ WHY THEY EXIST, and it is a measured failure rather than a tidiness idea.
+# Hooks can be LINKED, so a fix pushed here reaches every machine on `git pull`.
+# Commands and skills were only ever COPIED - and nothing re-copied them, and
+# nothing REPORTED that they were behind. Counted on one box: three of six
+# installed commands were strict subsets of their repo copy, with zero lines of
+# their own, i.e. never refreshed since the missing sections landed. One of those
+# missing sections was the rule that keeps an unattended run from failing its own
+# commit on every slice. The same week, a skill edited here needed a hand copy to
+# reach the same machine. "A fix that reaches every checkout and no live machine,
+# and nothing reports it" is the defect CLASS; linking is what removes it.
+#
+# Off by default, exactly like LINK_HOOKS: a link into a checkout is a surprise
+# on a machine that later moves that checkout, and Windows cannot always make
+# one. So linking is the fix for machines that want it, and install-doctor's
+# staleness check (claude-setup/scripts/install-doctor.sh) is what makes the
+# drift VISIBLE on every machine whether the keys are set or not. The reporting
+# half is not optional; this half is.
+#
+# ⛔ AND NEITHER IS THE COPY PATH'S OWN ANSWER. A key that is off by default
+# cannot repair the default, so the copy path has to be right on its own:
+# step_commands passes ${COMMANDS_MODE:-C}, and "C" is install_copy_safe - an
+# out-of-date copy is REFRESHED (and backed up), a file with lines of its own is
+# KEPT and named, and a symlink is left alone. That is the same three-way answer
+# LINK_COMMANDS=1 gives, minus the link; before it, the opt-in path protected a
+# hand-edited command and the default silently overwrote it, which is the wrong
+# way round for the path nobody configures.
+COMMANDS_MODE=""
+SKILLS_MODE=""
+if [ -n "$CONF_REPO" ]; then
+  if [ "$(conf_get "$CONF_REPO" LINK_COMMANDS "")" = "1" ]; then COMMANDS_MODE="L"; fi
+  if [ "$(conf_get "$CONF_REPO" LINK_SKILLS "")"   = "1" ]; then SKILLS_MODE="L"; fi
+  if [ -n "$COMMANDS_MODE" ] || [ -n "$SKILLS_MODE" ]; then
+    echo "  ${COMMANDS_MODE:+LINK_COMMANDS=1 }${SKILLS_MODE:+LINK_SKILLS=1 }: those trees will be symlinks to their repo sources, so a pull updates them (a file of yours that has diverged is backed up and named, never lost)"
+    echo ""
+  fi
+fi
+
+INSTALLED=""   # comma list of the steps that installed something from the current root
+OVERRIDDEN=0   # files of the current step that a later root ships too
+LAST_ROOT=""   # the root applied last; set before the roots are applied
+CLAUDE_GLOBAL_ANY=0   # 1 when any root ships claude-setup/config/CLAUDE.global.md
+step_done() {  # <step> <root> [detail]
+  echo "  $1: from $2${3:+ ($3)}"
+  INSTALLED="${INSTALLED:+$INSTALLED, }$1"
+}
+step_skip() { echo "  $1: skipped"; }
+# step_end <step> <root> <count> <detail> - the one line every step prints.
+step_end() {
+  local step="$1" root="$2" n="$3" detail="$4"
+  if [ "$n" -gt 0 ]; then
+    [ "$OVERRIDDEN" -gt 0 ] && detail="$detail; $OVERRIDDEN overridden by the personal root"
+    step_done "$step" "$root" "$detail"
+  elif [ "$OVERRIDDEN" -gt 0 ]; then
+    echo "  $step: skipped ($OVERRIDDEN overridden by the personal root)"
+  else
+    step_skip "$step"
+  fi
+  OVERRIDDEN=0
+}
+
+# ship <root> <rel> <dst> [x|l|L|C] - install <root>/<rel> at <dst> (executable
+# with "x", as a symlink with "l", as a symlink that refuses to overwrite a
+# diverged file with "L", as a copy that refuses to overwrite a diverged file
+# with "C") unless a LATER root ships the same <rel>:
+# the last root wins without the earlier copy landing first, which would back
+# the file up on every run.
+# Returns 0 installed, 1 not shipped by this root, 2 overridden.
+ship() {
+  local root="$1" rel="$2" dst="$3" mode="${4:-}"
+  [ -f "$root/$rel" ] || return 1
+  if [ "$root" != "$LAST_ROOT" ] && [ -f "$LAST_ROOT/$rel" ]; then
+    OVERRIDDEN=$((OVERRIDDEN + 1))
+    return 2
+  fi
+  case "$mode" in
+    x) install_file "$root/$rel" "$dst" ;;
+    l) install_link "$root/$rel" "$dst" ;;
+    L) install_link_safe "$root/$rel" "$dst" ;;
+    C) install_copy_safe "$root/$rel" "$dst" ;;
+    *) install_copy "$root/$rel" "$dst" ;;
+  esac
+}
+
+# ship_dir <root> <rel-dir> <dst-dir> <glob> [x] - ship every matching regular
+# file of <root>/<rel-dir> into <dst-dir>; leaves the number installed in
+# SHIPPED (a variable, not stdout: a subshell would lose the OVERRIDDEN count).
+SHIPPED=0
+ship_dir() {
+  local root="$1" rel="$2" dst="$3" glob="$4" mode="${5:-}" f
+  SHIPPED=0
+  for f in "$root/$rel"/$glob; do
+    [ -f "$f" ] || continue
+    if ship "$root" "$rel/$(basename "$f")" "$dst/$(basename "$f")" "$mode"; then SHIPPED=$((SHIPPED + 1)); fi
+  done
+}
+
+# skills/<name>/ → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills
+# (each <name> replaced whole - a skill is a tree, not a file to diff - and a
+# name the later root also ships is left to that root).
+step_skills() {
+  local root="$1" n=0 d name dest
+  for d in "$root"/skills/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    if [ "$root" != "$LAST_ROOT" ] && [ -d "$LAST_ROOT/skills/$name" ]; then
+      OVERRIDDEN=$((OVERRIDDEN + 1)); continue
+    fi
+    for dest in "$HOME_DIR/.codex/skills" "$HOME_DIR/.config/opencode/skills" "$CLAUDE_DIR/skills"; do
+      mkdir -p "$dest"
+      # With LINK_SKILLS=1 the skill becomes a symlink to the repo directory, so
+      # editing the skill here IS editing it on this machine and a pull carries
+      # it. Everything below is the copy path, which is still the default.
+      if [ "$SKILLS_MODE" = "L" ]; then
+        link_skill_safe "${d%/}" "$dest/$name"
+        continue
+      fi
+      # ⚠️ A skill is replaced WHOLE (rm -rf + cp -r) rather than merged: a
+      # merge would strand files that an older version of the skill shipped
+      # and the new one dropped. That makes this the one step that can destroy
+      # work, because an existing <name>/ here is not necessarily an earlier
+      # copy of ours - it may be a skill the user wrote by hand under the same
+      # name. So back it up first. Only when it DIFFERS, so re-running an
+      # unchanged tree still leaves no .bak clutter, exactly like install_file.
+      # ...OUTSIDE the skills root, or the backup registers as a second skill.
+      if [ -d "$dest/$name" ] && ! diff -rq "${d%/}" "$dest/$name" >/dev/null 2>&1; then
+        backup "$dest/$name" "$(dirname "$dest")/skill-backups"
+      fi
+      rm -rf "${dest:?}/$name"
+      cp -r "${d%/}" "$dest/$name"
+    done
+    n=$((n + 1))
+  done
+  step_end skills "$root" "$n" "$n → ~/.codex/skills, ~/.config/opencode/skills, ~/.claude/skills${SKILLS_MODE:+ (symlinks)}"
+}
+
+# agents/AGENTS.md → ~/AGENTS.md ; agents/CLAUDE.md → ~/CLAUDE.md + ~/.claude/CLAUDE.md
+# (a differing existing file is backed up beside itself). Claude Code reads
+# user-level instructions from ~/.claude/CLAUDE.md; a file at the home root is
+# only picked up as a project-parent file when a project lives directly under
+# $HOME. A CLAUDE.global.md shipped by either root takes ~/.claude/CLAUDE.md
+# instead - see step_claude_global.
+step_agents() {
+  local root="$1" got="" n=0
+  if ship "$root" agents/AGENTS.md "$HOME_DIR/AGENTS.md"; then
+    got="AGENTS.md → ~/AGENTS.md"; n=$((n + 1))
+  fi
+  # Both CLAUDE.md destinations honour LINK_CLAUDE_MD (CLAUDE_MD_MODE).
+  if ship "$root" agents/CLAUDE.md "$HOME_DIR/CLAUDE.md" "$CLAUDE_MD_MODE"; then
+    n=$((n + 1))
+    if [ "$CLAUDE_GLOBAL_ANY" = "1" ]; then
+      got="${got:+$got, }CLAUDE.md → ~/CLAUDE.md (~/.claude/CLAUDE.md comes from CLAUDE.global.md)"
+    else
+      if [ "$CLAUDE_MD_MODE" = "l" ]; then
+        install_link "$root/agents/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+      else
+        install_copy "$root/agents/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+      fi
+      got="${got:+$got, }CLAUDE.md → ~/CLAUDE.md, ~/.claude/CLAUDE.md"
+    fi
+  fi
+  step_end agents "$root" "$n" "$got"
+}
+
+# config/codex-config.toml, codex-hooks.json, codex-AGENTS.md, codex-rules/ → ~/.codex/
+step_codex() {
+  local root="$1" got="" n=0 r
+  if ship "$root" config/codex-config.toml "$HOME_DIR/.codex/config.toml"; then got="config.toml"; n=$((n + 1)); fi
+  if ship "$root" config/codex-hooks.json "$HOME_DIR/.codex/hooks.json"; then got="${got:+$got, }hooks.json"; n=$((n + 1)); fi
+  if ship "$root" config/codex-AGENTS.md "$HOME_DIR/.codex/AGENTS.md"; then got="${got:+$got, }AGENTS.md"; n=$((n + 1)); fi
+  ship_dir "$root" config/codex-rules "$HOME_DIR/.codex/rules" '*'; r="$SHIPPED"
+  if [ "$r" -gt 0 ]; then got="${got:+$got, }$r rules"; n=$((n + r)); fi
+  step_end codex "$root" "$n" "$got → ~/.codex"
+}
+
+# config/opencode-config.jsonc → ~/.config/opencode/opencode.jsonc ; plugins/*.js → ~/.opencode/plugins/
+step_opencode() {
+  local root="$1" got="" n=0 p
+  if ship "$root" config/opencode-config.jsonc "$HOME_DIR/.config/opencode/opencode.jsonc"; then
+    got="opencode.jsonc → ~/.config/opencode"; n=$((n + 1))
+  fi
+  ship_dir "$root" plugins "$HOME_DIR/.opencode/plugins" '*.js'; p="$SHIPPED"
+  if [ "$p" -gt 0 ]; then got="${got:+$got, }$p plugins → ~/.opencode/plugins"; n=$((n + p)); fi
+  step_end opencode "$root" "$n" "$got"
+}
+
+# claude-setup/commands/*.md → ~/.claude/commands/ (symlinks with LINK_COMMANDS=1,
+# otherwise subset-safe copies: refreshed when out of date, kept when edited -
+# install_copy_safe, and ${COMMANDS_MODE:-C} is where that default is chosen).
+step_commands() {
+  local root="$1" n
+  ship_dir "$root" claude-setup/commands "$CLAUDE_DIR/commands" '*.md' "${COMMANDS_MODE:-C}"; n="$SHIPPED"
+  step_end commands "$root" "$n" "$n → ~/.claude/commands${COMMANDS_MODE:+ (symlinks)}"
+}
+
+# claude-setup/config/agents/*.md → ~/.claude/agents/ - nothing in Claude Code
+# switches the main model on a condition, so subagent files are the mechanism
+# for "escalate this kind of work to a stronger model".
+step_subagents() {
+  local root="$1" n
+  ship_dir "$root" claude-setup/config/agents "$CLAUDE_DIR/agents" '*.md'; n="$SHIPPED"
+  step_end subagents "$root" "$n" "$n → ~/.claude/agents"
+}
+
+# claude-setup/config/hooks/* → ~/.claude/hooks/ (executable). Scripts are only
+# COPIED here, never registered: the framework's memory hooks are registered
+# by setup.sh, anything else - a personal hook in particular - by the
+# settings.json of the root that ships it (step_settings).
+# claude-setup/config/git-hooks/* → ~/.git-hooks/ ONLY. Never the template dir.
+# An overlay step like every other one: whatever both roots ship, the personal
+# copy lands last and wins, and a guard only the personal repo carries is
+# installed from there alone. That is what lets a policy hook live in a
+# personal repo instead of being gated by a flag in this one.
+step_git_hooks() {
+  local root="$1" f name n=0
+  for f in "$root"/claude-setup/config/git-hooks/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    # The later root ships this same guard: it wins, so skip it here.
+    if [ "$root" != "$LAST_ROOT" ] && [ -f "$LAST_ROOT/claude-setup/config/git-hooks/$name" ]; then
+      OVERRIDDEN=$((OVERRIDDEN + 1)); continue
+    fi
+    # ⚠️ An existing ~/.git-hooks/$name that differs is REPLACED (backed up
+    # first by install_file). record_previous says nothing when core.hooksPath
+    # already pointed here, so this is the only place the user learns their own
+    # hook logic has just stopped running. Both shipped guards exec
+    # <repo>/.git/hooks/$name at the end, so that is where such logic belongs;
+    # the backup is what to move.
+    if [ -e "$HOME_DIR/.git-hooks/$name" ] && ! cmp -s "$f" "$HOME_DIR/.git-hooks/$name"; then
+      echo -e "  ${YELLOW}! $HOME_DIR/.git-hooks/$name exists and differs; replacing it (backup kept beside it).${NC}"
+      echo    "    if that was your own hook rather than an earlier copy from this framework, its logic"
+      echo    "    no longer runs: move it into <repo>/.git/hooks/$name - the shipped $name chains to it."
+    fi
+    install_file "$f" "$HOME_DIR/.git-hooks/$name"
+    # ⛔ DO NOT also install into ~/.git-templates/hooks. init.templateDir copies
+    # that directory into every new clone's .git/hooks, so the hook that
+    # core.hooksPath already runs finds an IDENTICAL COPY OF ITSELF to chain
+    # into. `git commit` then hangs in every fresh clone, spawning an unbounded
+    # tree of shells - and `timeout` does not bound it.
+    #
+    # It shipped that way "as a fallback if core.hooksPath is ever unset by
+    # hand". That fallback is worth far less than the fork bomb it costs, and
+    # core.hooksPath is set unconditionally earlier in this same run anyway.
+    #
+    # Purge rather than merely skip, so a machine that already carries the
+    # copies is REPAIRED by running setup again.
+    rm -f "$HOME_DIR/.git-templates/hooks/$name"
+    n=$((n + 1))
+  done
+  step_end git-hooks "$root" "$n" "$n → ~/.git-hooks"
+}
+
+step_hooks() {
+  local root="$1" n
+  ship_dir "$root" claude-setup/config/hooks "$CLAUDE_DIR/hooks" '*' x; n="$SHIPPED"
+  step_end hooks "$root" "$n" "$n → ~/.claude/hooks (copied, not registered)"
+}
+
+# claude-setup/config/settings.json → MERGED into ~/.claude/settings.json by
+# the template merger, never copied over it (a wholesale copy would discard
+# the hooks setup.sh registered and the permissions you have approved). The
+# merger appends a hook only if no entry under that event already runs the
+# same script (matched by basename, so `~/.claude/hooks/x` and an absolute
+# spelling count as one), copies statusLine / env keys only when absent, never
+# touches permissions, and leaves '~' in commands as written. The personal
+# root's merge runs after the framework's because the roots are applied in
+# that order.
+step_settings() {
+  local root="$1" tpl="$root/claude-setup/config/settings.json" bak
+  [ -f "$tpl" ] || { step_skip settings; return 0; }
+  # The .py and .mjs mergers are two ports of one tool applying identical
+  # rules, so either interpreter will do: a node-only machine used to lose the
+  # whole template merge even though the port it needs ships beside the other.
+  local runner="" script=""
+  if command -v python3 >/dev/null 2>&1 && [ -f "$MERGER" ]; then
+    runner="python3"; script="$MERGER"
+  elif command -v node >/dev/null 2>&1 && [ -f "$MERGER_JS" ]; then
+    runner="node"; script="$MERGER_JS"
+  else
+    echo "  settings: skipped (no python3 or node with a merger beside it - merge $tpl into $SETTINGS by hand)"
+    return 0
+  fi
+  bak=""
+  [ "$SETTINGS_PREEXISTED" = "1" ] && bak="$(snapshot_settings)"
+  if "$runner" "$script" "$SETTINGS" "$tpl" | sed 's/^/    /'; then
+    step_done settings "$root" "merged into $SETTINGS"
+  else
+    echo "  ! settings: merge of $tpl failed; merge it into $SETTINGS by hand"
+  fi
+  settle_settings_backup "$bak"
+}
+
+# claude-setup/config/CLAUDE.global.md → ~/.claude/CLAUDE.md. The last root
+# that ships one wins, and it beats agents/CLAUDE.md for this one destination.
+step_claude_global() {
+  local root="$1" n=0
+  if ship "$root" claude-setup/config/CLAUDE.global.md "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_MD_MODE"; then n=1; fi
+  step_end CLAUDE.global.md "$root" "$n" "→ ~/.claude/CLAUDE.md${CLAUDE_MD_MODE:+ (symlink)}"
+}
+
+# claude-setup/config/statusline-command.sh → ~/.claude/.
+#
+# ⚠️ The framework ships NO statusline. A statusline is a preference, not part
+# of a memory layer, so this is an overlay slot: a personal root that carries
+# claude-setup/config/statusline-command.sh gets it installed, and a root that
+# does not simply reports `skipped`. The settings template no longer names a
+# statusLine key either - the two must travel together or you get the bug this
+# framework shipped for a while, where every session ran a statusline command
+# that did not exist. A personal root that wants one ships both: the script
+# here, and the statusLine key in its own settings.json, merged after this one.
+#
+# The shell script wants `jq` at runtime; hence the note when it is missing.
+step_statusline() {
+  local root="$1" f got="" n=0 twins="statusline-command.sh"
+  # Windows runs the .js twin (settings.json: node statusline-command.js). Only
+  # setup.ps1 used to ship it, and updates run THIS script, so on Windows the
+  # .js froze while the .sh kept updating - the 🦁/🐯 icons were missing on
+  # Windows for a week (2026-10-07). Ship the .js here too, on Windows.
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) twins="$twins statusline-command.js" ;; esac
+  for f in $twins; do
+    if ship "$root" "claude-setup/config/$f" "$CLAUDE_DIR/$f" x; then got="${got:+$got, }$f"; n=$((n + 1)); fi
+  done
+  step_end statusline "$root" "$n" "$got → ~/.claude"
+  if [ "$n" -gt 0 ] && ! command -v jq >/dev/null 2>&1; then
+    echo "    note: the statusline reads its input with jq; without jq it renders empty"
+  fi
+}
+
+apply_root() {  # <label> <root>
+  local label="$1" root="$2"
+  INSTALLED=""
+  echo -e "${CYAN}Installing from the $label root: $root${NC}"
+  step_statusline "$root"
+  step_skills "$root"
+  step_agents "$root"
+  step_codex "$root"
+  step_opencode "$root"
+  step_commands "$root"
+  step_subagents "$root"
+  step_hooks "$root"
+  step_git_hooks "$root"
+  step_settings "$root"
+  step_claude_global "$root"
+  echo ""
+}
+
+LAST_ROOT="${OVERLAY_ROOT:-$SCRIPT_DIR}"
+for r in "$SCRIPT_DIR" "$OVERLAY_ROOT"; do
+  [ -n "$r" ] && [ -f "$r/claude-setup/config/CLAUDE.global.md" ] && CLAUDE_GLOBAL_ANY=1
+done
+apply_root framework "$SCRIPT_DIR"
+INSTALLED_FRAMEWORK="$INSTALLED"
+INSTALLED_PERSONAL=""
+if [ -n "$OVERLAY_ROOT" ]; then
+  apply_root personal "$OVERLAY_ROOT"
+  INSTALLED_PERSONAL="$INSTALLED"
+fi
+
+# ── Verify ───────────────────────────────────────
+
+echo -e "${GREEN}========================================"
+echo " Setup Complete!"
+echo -e "========================================${NC}"
+echo ""
+echo "Installed:"
+# Listed from what is actually on disk rather than from a fixed name list:
+# which guards land now depends on what each root ships, so a hardcoded list
+# would go stale the moment a personal repo carries one of its own.
+gh_live="$(ls "$HOME_DIR/.git-hooks" 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+echo "  git hooks:     $HOME_DIR/.git-hooks/{${gh_live:-none}} (core.hooksPath; the template dir is kept EMPTY on purpose)"
+echo "  session hooks: $HOME_DIR/.claude/hooks/{ai-memory-sync,ai-memory-commit,memory-doctor-notice}.sh"
+echo "  framework:     $SCRIPT_DIR  (recorded in $HOME_DIR/.claude/sunstone-path for the doctor notice)"
+echo ""
+
+echo "Install roots:"
+echo "  framework: $SCRIPT_DIR"
+echo "    installed: ${INSTALLED_FRAMEWORK:-nothing (this checkout ships none of the optional trees)}"
+if [ -n "$OVERLAY_ROOT" ]; then
+  echo "  personal:  $OVERLAY_ROOT"
+  echo "    installed: ${INSTALLED_PERSONAL:-nothing (the repo carries none of the optional trees)}"
+elif [ "$SKIP_OVERLAY" = "1" ]; then
+  echo "  personal:  skipped (--skip-overlay)"
+else
+  echo "  personal:  none (no personal repo recorded; its skills/, agents/, config/, plugins/ and"
+  echo "             claude-setup/{commands,config} would be installed after the framework's)"
+fi
+echo ""
+
+echo "Memory:"
+if [ -n "$MEMORY_REPO" ]; then
+  mem_file="$(conf_get "$MEMORY_REPO" MEMORY_FILE claude-setup/memory/ABOUT-ME.md)"
+  mem_dir="$(conf_get "$MEMORY_REPO" MEMORY_DIR claude-setup/memory)"
+  echo "  personal repo: $MEMORY_REPO  (recorded in $PATH_FILE)"
+  if [ -f "$MEMORY_REPO/$mem_file" ]; then
+    echo "  injected file: $mem_file"
+  elif [ -f "$MEMORY_REPO/$mem_dir/MEMORY.md" ]; then
+    echo "  injected file: $mem_dir/MEMORY.md  (MEMORY_FILE $mem_file not found; using the index)"
+  else
+    echo "  injected file: none yet - create $mem_file in the repo and the hook picks it up next session"
+  fi
+  echo "  memory tree:   $mem_dir  (the SessionEnd hook commits only this path)"
+  echo "  optional config: $MEMORY_REPO/claude-setup/config/sunstone.conf"
+else
+  echo "  no personal repo recorded; hooks are installed and stay silent until"
+  echo "  $PATH_FILE points at a git repo (or ~/.ai-memory is one)."
+  echo "  re-run:  bash setup.sh --memory-repo <git-url-or-path>"
+  echo "  optional config: <personal-repo>/claude-setup/config/sunstone.conf"
+fi
+cat <<'CONF'
+  config keys (KEY=VALUE, all optional; defaults shown):
+    MEMORY_DIR=claude-setup/memory              tree the SessionEnd hook may commit
+    MEMORY_FILE=claude-setup/memory/ABOUT-ME.md file injected into every session
+    MEMORY_INDEX=claude-setup/memory/MEMORY.md  index memory-doctor checks
+    MEMORY_REPOS="<repo-name>"                  repos with the mixed-staging guard
+    GUARDED_REPOS="sunstone <repo-name>"        repos with the force-push guard
+    MEMORY_META_FILES=""                        files in MEMORY_DIR that are structure, not memories
+    PROJECT_ROOTS=""                            dirs projects live under (memory-doctor slug resolution)
+    QUEUE_FILE=""                               a markdown work queue; set, memory-doctor checks its NOW table
+    QUEUE_NOW_HEADING=""                        its NOW heading (default: the first H2 containing "NOW")
+    QUEUE_NOW_MAX=3                             rows the NOW table may hold
+    BUS_DIR=""                                  session bus dir (outbox-<side>.md per machine); set = on
+    BUS_SIDE=""                                 this machine's side (default: windows/mac/wsl/linux, detected)
+    LINK_CLAUDE_MD=""                           1 = setup.sh symlinks ~/CLAUDE.md and ~/.claude/CLAUDE.md to the repo files
+    LINK_HOOKS=""                               1 = setup.sh symlinks ~/.claude/hooks/* and ~/.git-hooks/*, so a pull updates them
+    LINK_COMMANDS=""                            1 = setup.sh symlinks ~/.claude/commands/*.md, so a pull updates them
+    LINK_SKILLS=""                              1 = setup.sh symlinks ~/.claude/skills/<name>, so a pull updates them
+CONF
+echo ""
+
+# ⛔ "The script exited 0" has never meant "this machine is set up", and every
+# install failure worth the name looks exactly like success: a hook that was
+# never linked, a settings entry naming a file that is gone, a guard whose
+# machine-local list is missing, an interpreter no non-interactive shell can
+# find. Each of those was found by a person noticing, days later. So setup ends
+# by CHECKING, and prints what it found.
+DOCTOR="$SCRIPT_DIR/claude-setup/scripts/install-doctor.sh"
+if [ -f "$DOCTOR" ]; then
+  echo "Checking this machine..."
+  bash "$DOCTOR" || true   # a finding is information, not a failed install
+  echo ""
+fi
+
+echo "Restart Claude Code to pick up the hooks."

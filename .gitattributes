@@ -1,0 +1,35 @@
+# Normalize all text to LF in the repo and in the working tree on every platform.
+#
+# Without this, Git for Windows (core.autocrlf=true by default) checks the tree
+# out as CRLF. That is invisible to Windows git, but WSL git -- which reads the
+# same worktree with autocrlf unset -- then reports every tracked file as
+# modified, and `pull --ff-only` aborts for anyone driving the clone from WSL.
+# Shell scripts checked out as CRLF also fail under bash (`bad interpreter`).
+#
+# eol=lf overrides core.autocrlf, so a Windows checkout stays LF too.
+# Binary files need an explicit `binary` rule below: `text=auto` guesses from
+# content, and a wrong guess corrupts the file on checkout.
+* text=auto eol=lf
+
+# Find drift with:    git ls-files --eol | grep 'w/crlf' | grep -v 'eol=crlf'
+# Check one file:     git check-attr text eol -- <path>
+
+# Windows-native formats that must stay CRLF (cmd.exe misreads LF batch files).
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.reg  text eol=crlf
+
+# Binary: never normalise, never diff as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.woff  binary
+*.woff2 binary
+*.db    binary
+*.sqlite binary

@@ -1,0 +1,135 @@
+{
+  "$comment": "Portable template merged into ~/.claude/settings.json by setup via merge-settings-template.py/.mjs: hook entries are appended only when no entry under that event already runs the same script (matched by basename), and no other key is copied. It carries ONLY what the memory layer needs. The PreToolUse entry is a graphify hint that runs a Node script only when graphify-out/graph.json, the script and node are all present - never python3, never an error. Order matters for SessionStart: setup registers ai-memory-sync before this template is merged, so session-bus-notice.js (off until BUS_DIR is set in sunstone.conf) lands after the pull that brings the other machine's outbox. Preferences about your editor, your statusline or another tool's auto-updater are not the framework's to set on your machine - put those in your own memory repo's claude-setup/config/settings.json, which is merged after this one and wins.",
+  "permissions": {
+    "allow": [],
+    "deny": [],
+    "ask": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f graphify-out/graph.json ] && [ -f ~/.claude/hooks/graphify-nudge.mjs ] && command -v node >/dev/null 2>&1 && node ~/.claude/hooks/graphify-nudge.mjs || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/require-agent-model.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Read|Grep|Glob|WebFetch|WebSearch|Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/context-cap.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/token-budget.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/guard-secrets.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/guard-key-literals.mjs"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/context-mode-cache-heal.mjs"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/session-bus-notice.js"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/drift-notice.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/supercode-trigger.mjs"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/sound-gate.sh prompt"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/context-guard.mjs"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/agent-watch.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/guard-key-literals.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/run-node.sh ~/.claude/hooks/memory-guard.mjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

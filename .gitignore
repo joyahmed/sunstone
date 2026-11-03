@@ -1,0 +1,12 @@
+.opencode/
+graphify-out/
+__pycache__/
+*.pyc
+
+# macOS Finder metadata; a public repo should never carry it.
+.DS_Store
+
+# Per-machine Claude Code permission grants. Ignored here rather than relying on
+# a personal global ignore, so that a stranger who clones this and runs Claude
+# Code in it cannot commit their own machine's allow rules back upstream.
+.claude/settings.local.json
