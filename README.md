@@ -1,466 +1,135 @@
+<div align="center">
+
 # sunstone
 
-**Your agent's memory is a git repo you own.** Carry it to a new machine, run the installer, and
-what you know grows back around you - your memory, and whatever skills, commands and hooks you
-keep beside it. No API, no vendor, no database, nothing to sign up for. The machine can die
-because the knowledge was never stored on it.
+**Your agent's memory is a git repo you own.**<br>
+Carry it to a new machine, run one installer, and everything you taught it is back.
 
-What it does, in plumbing terms:
+[![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20WSL%20%C2%B7%20Windows-1e293b?style=flat-square)](#install) [![For Claude Code](https://img.shields.io/badge/for-Claude%20Code-1e293b?style=flat-square)](#what-it-is) [![License: MIT](https://img.shields.io/badge/license-MIT-1e293b?style=flat-square)](LICENSE)
 
-- **A memory repo you own.** Your memory files live in a private git repo; the framework records its clone path in one line and never assumes a name or a layout.
-- **SessionStart pull and inject.** Every session begins by pulling that repo and injecting one file from it into context.
-- **SessionEnd commit.** Whatever the session wrote under the memory tree is committed when it ends, and the next start pushes it.
-- **Two git guards plus `memory-doctor`.** A mixed-staging guard and a force-push guard keep the repo safe when several sessions write to it; `memory-doctor` checks the wiring, the index and the drains.
+Free · No server, no account, no database · Shell + Node + git
 
-```bash
-git clone https://github.com/<owner>/sunstone sunstone   # the URL shown on this repository's page
-cd sunstone
-./setup.sh --memory-repo git@github.com:alice/my-memory.git   # or https://github.com/alice/my-memory.git
-```
+<br>
 
-## The two-repo model
+<img src=".github/social-preview.png" alt="sunstone: portable, git-synced memory and setup for Claude Code. One clone, every machine." width="900">
+
+</div>
+
+<br>
+
+## Why I built this
+
+I code on more than one machine. Every time, my coding agent started from zero on the new one. What it had learned about me and my projects sat in a folder on the old machine, and it never moved. If that machine died, the memory died with it.
+
+I didn't want a service or a database for this. I already had the right tool: git. So **sunstone** keeps the memory in a private git repo that belongs to you. Each session pulls it at the start and commits what it learned at the end. A new machine is one clone and one installer away from knowing everything the old one knew.
+
+It's the framework only, with nothing personal in it. Your memory, and any skills or commands of your own, live in your own repo.
+
+> *A sunstone is the crystal Jor-El used to keep Kryptonian knowledge alive after the planet was gone. Plant it, and the whole Fortress of Solitude grows back.*
+
+## What it is
+
+Two repos, kept apart on purpose:
 
 | Repo | What it holds | Who owns it |
 |---|---|---|
-| **sunstone** (this one) | Hooks, setup scripts, `memory-doctor`, docs. Nothing personal. | Public, shared |
-| **your memory repo** | Your memory files, an optional `sunstone.conf`, and optionally your own skills, commands, agents, hooks and statusline in the framework's layout - the [overlay](claude-setup/SETUP.md#the-overlay-your-own-skills-commands-and-hooks). | You, private |
+| **sunstone** (this one) | The installers, the hooks, `memory-doctor`, the docs. Nothing personal. | Public, shared |
+| **your memory repo** | Your memory files, an optional `sunstone.conf`, and, if you want, your own skills, commands, agents, hooks and status line in the same layout. | You, private |
 
-> *A sunstone is the crystal Jor-El used to preserve Kryptonian knowledge past the destruction of
-> the planet. Kal-El inherits one, and planting it grows the whole Fortress of Solitude back.*
+The installer copies hooks into Claude Code's settings. From then on, every session starts by pulling your memory repo and putting one file from it into the conversation, and ends by committing what was written to the memory folder.
 
-Concretely: a portable memory layer for Claude Code - its two session hooks are Claude Code hooks -
-plus an overlay that carries your skills and config to Codex and OpenCode as well, and two git
-hooks that keep the memory repo safe when several sessions write to it at once. Every session
-starts by pulling your private memory repo and injecting one file from it into context;
-everything a session writes back into the memory tree is committed when the session ends. The
-framework itself is plumbing - it ships no skills, no slash commands and no statusline; the
-personal half lives in a repo you own. Two third-party conveniences do still ship in the settings
-template - a graphify hint on `Bash` searches and a context-mode cache self-heal at SessionStart -
-and both are listed under [What the framework deliberately does not
-ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship), with how to drop them.
+## Highlights
 
-The framework never assumes a name, a path or a layout for your memory repo beyond
-[the minimum](claude-setup/SETUP.md#the-memory-repo). Its clone path is recorded in the
-single-line file `~/.claude/ai-memory-path`; the two memory hooks read that file, fall back to
-`~/.ai-memory`, and exit silently only when neither is a git repo - so a machine with no memory
-repo runs them as no-ops. (The force-push guard is the one exception: it protects a repo named
-`sunstone` even on a machine that has no memory repo at all.) A second single-line
-file, `~/.claude/sunstone-path`, records where this framework checkout lives, so hooks that are
-copies can still find `memory-doctor` in it. Both files are read whole and trimmed, never split
-on spaces, so a path containing a space works.
+- 🧠 **Memory that travels**: a private git repo you own. The installer records where it is cloned and assumes nothing else about it.
+- 🔄 **Sync on its own**: pull and inject at session start, commit at session end, push at the next start.
+- 🩺 **`memory-doctor`**: one read-only check of the wiring, the sync state, the memory index, duplicates and drift. Exit code 1 on an error, so it works as a gate.
+- 🛡️ **Git guards**: refuse a commit that mixes memory files with other files, and any force-push to a guarded repo. Your repos' own git hooks still run.
+- 🔐 **Secret guards**: stop a session from reading a `.env` or SSH key into the chat, and from writing a live key into a file.
+- 📏 **Context cap**: a session gets a nudge as it fills up and a hard stop at 80k tokens grown, so it hands over before it gets sloppy.
+- 🧩 **Bring your own**: a skill, command, agent or hook in your memory repo with the same name as one here wins.
 
-Anything that is a *preference* rather than the memory layer - a statusline, another tool's
-auto-updater setting, prose telling an assistant which third-party CLI to reach for - is
-deliberately not shipped here and reaches your machine through the overlay instead. (The two
-template hooks named above are the surviving exception, and they are inert until the tool they
-serve is present.) The reasoning, and the bug that taught it, are
-in [What the framework deliberately does not
-ship](claude-setup/SETUP.md#what-the-framework-deliberately-does-not-ship).
+<details>
+<summary><b>Everything it installs</b> (click to open)</summary>
 
-Throughout these docs the example memory repo is called `my-memory` and its owner is `alice`.
+### Memory
 
-## Platforms
+- `ai-memory-sync` (session start): pulls your memory repo, pushes anything not yet pushed, runs the repo's optional `claude-setup/session-start.d/` scripts, then injects your memory file. Every network call is time-bounded.
+- `ai-memory-commit` (session end): commits what changed under the memory folder, staged by path and nothing else, then pushes in the background.
+- `memory-doctor-notice` (session start): a short notice from `memory-doctor`, at most once every 20 hours, and nothing when everything is clean.
+- A session bus (off until you set `BUS_DIR`): one machine leaves a note in its own outbox file, and the next session on another machine is told about it.
 
-One installer per platform, both installing the same layer. `setup.sh` covers Linux, macOS and
-WSL; `setup.ps1` covers native Windows and is described under
-[Windows](claude-setup/SETUP.md#windows).
+### Guards
 
-| | Installer | What that platform lacks by default, and what happens |
-|---|---|---|
-| **Linux** | `setup.sh` | Nothing in particular. This is the most-exercised path. |
-| **WSL** | `setup.sh` | Treated as Linux, and it is one - a WSL checkout is a Linux checkout. Only the Windows side of the same machine needs `setup.ps1`, and only if you also run Claude Code natively there. |
-| **macOS** | `setup.sh` | No `python3` (it arrives with the Xcode command line tools), so the settings template is merged by `node` instead; no `timeout`, so the SessionStart hook bounds git itself rather than running unbounded. `/bin/bash` is 3.2 - nothing here uses a bash 4 feature. BSD `date`, `readlink` and `sort` differ from GNU and each use falls back. |
-| **Windows** | `setup.ps1` | No `python3`, so the three session hooks install as their Node ports (`node` is required for them, and - with no `python3` here - for the `settings.json` template merge too; the git hooks, global `CLAUDE.md` and subagent files land without it). Nothing the settings template registers needs `python3` either: the graphify hint is a Node script that runs only when a graph, the script and `node` are all present. The git hooks are `sh` scripts, which Git for Windows runs through its own bundled shell - nothing extra to install. |
+- `pre-commit` and `pre-push`, installed through a global `core.hooksPath`. They chain to each repo's own `.git/hooks/`, so husky and friends keep working.
+- `public-privacy-guard`: refuses to commit personal content into a public repo.
+- `guard-secrets` and `guard-key-literals`: keep secrets out of the transcript and out of files.
+- `context-guard`, `context-cap` and `token-budget`: watch how full a session is and how much its agents spend.
 
-✅ **Honest status.** All four platforms are verified by running the installer end to end. macOS
-was the last, on 2026-09-12 (Apple Silicon, macOS 26 / Darwin 25, `/bin/bash` 3.2, `/usr/bin/git`
-and `python3` from Xcode): every step landed, `memory-doctor` reported 0 errors, and the
-SessionStart hook injected the memory file on the first try. The one macOS lesson lives outside
-the framework: bash 3.2's `echo -e` does not know `\e`, so a statusline or hook carried by the
-overlay must write `\033[` - the framework's own hooks already do.
+### Agents and commands
 
-On Windows, `setup.ps1` needs **PowerShell 7**: ⚠️ **it does not parse under Windows PowerShell
-5.1**, so use `pwsh`, not the `powershell` that ships with the OS. Its first end-to-end run was
-2026-09-11 - 44 skills across three roots, both git-hook trees, the settings merge and the memory
-wiring. ⚠️ It overwrites `CLAUDE.md`, replaces skill directories whole, and rewrites
-`~/.claude/ai-memory-path`, with no `-WhatIf` and no dry run - back those up yourself before a
-first run, and see [Windows](claude-setup/SETUP.md#windows). After any first run on a new machine, the [Verify](claude-setup/SETUP.md#verify) steps are what to check.
+- Five agent files (`architect`, `verify`, `general-purpose`, `implementer`, `scout`), each pinned to a model tier, so a delegated job runs on a model picked for it.
+- `/supercode` (fan the work out over parallel agents), `/supermode` (plan once, then run unattended), and `/mute`, `/unmute`, `/solo`, `/unsolo`, `/sound` for spoken notices.
 
-## Quick start
+### Settings
 
-Then restart Claude Code, and check the result with `node claude-setup/scripts/memory-doctor.js`.
-The first session after that restart pulls `my-memory`, injects its memory file, and the
-SessionEnd hook starts committing whatever the session writes under the memory tree.
+- A `~/.claude/CLAUDE.md` with the rules for where a memory goes. A copy in your memory repo wins.
+- A merge into `~/.claude/settings.json` that registers the hooks.
+- Re-running the installer is how an update lands, and `setup.sh` backs up anything it overwrites.
 
-**No memory repo yet?** [Create one first](claude-setup/SETUP.md#the-memory-repo) - an empty
-private repo on your host, then a short `git init` recipe fills it and pushes. `setup.sh` needs a
-repo that already exists; it will clone one or adopt a local clone, but it will not create one
-for you. A memory repo holding nothing but `claude-setup/memory/ABOUT-ME.md` is already complete.
+The file-by-file list, the flags and the uninstall steps are in [claude-setup/SETUP.md](claude-setup/SETUP.md).
 
-**Give the repo in whichever URL form this machine can already authenticate**: the SSH form needs
-an SSH key, the HTTPS form a credential helper or token, and `git ls-remote <url>` is the quick
-way to check by hand. `git` itself must be on `PATH` - **both** installers check for it before
-they print anything at all and stop with `nothing has been installed` if it is missing, rather
-than surfacing a bare `git: command not found` halfway through with the hook files already on
-disk. Past that, `setup.sh` resolves the memory repo *first*: the clone, or the check that a local
-path is a git repo, happens before anything is written to the machine, so a bad URL or a missing
-SSH key leaves the machine exactly as it was and there is nothing to undo.
+</details>
 
-`setup.sh` also reads the repo from `SUNSTONE_MEMORY_REPO` (the flag wins), and asks for it when
-it is running in a terminal with neither. A git URL is cloned into `~/.ai-memory` - the one path
-the hooks also try when `ai-memory-path` is missing - or into `--clone-to <dir>`; anything else is
-treated as a local clone and used in place. Every flag that takes a value accepts both
-`--flag <value>` and `--flag=<value>`. `--skip-memory` leaves `ai-memory-path` alone entirely, and
-`--skip-overlay` installs the framework's trees only. The full table is in
-[Flags](claude-setup/SETUP.md#flags).
+## Install
 
-Clone this repository as it is; fork it first only if you intend to change the framework, since
-`setup.sh` records the checkout's location in `~/.claude/sunstone-path` and the SessionStart
-notice hook runs `memory-doctor` from there.
+You need `git` and Claude Code. `node` and `python3` are recommended; on Windows `node` is required. You also need a memory repo: any **private** git repo you can push to. An empty one is fine. [How to make one](claude-setup/SETUP.md#the-memory-repo).
 
-Windows: `pwsh -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo <url-or-path>` - **`pwsh`, not
-the `powershell` that ships with Windows**, which cannot parse the script - and see
-[Windows](claude-setup/SETUP.md#windows) for what differs.
-
-## What gets installed
-
-Twelve steps, run once from the framework root and again from your memory repo. In summary:
-
-- **thirteen hook scripts** in `~/.claude/hooks/` - `ai-memory-sync`, `ai-memory-commit` and
-  `memory-doctor-notice` (each with its Node port), `session-bus-notice.js`, `graphify-nudge.mjs`,
-  `context-mode-cache-heal.mjs`, `ctx-gauge.mjs`, `context-guard.mjs` and `context-cap.mjs` (see
-  [Context cap](#context-cap)), and `say.sh` / `say.ps1` (one spoken sentence; silent where the
-  machine cannot speak) -
-  producing six registered entries in `~/.claude/settings.json`: the three memory hooks, plus the
-  settings template's own `PreToolUse` entry (the graphify nudge) and its two `SessionStart`
-  entries (the cache heal and the session bus, the latter inert until `BUS_DIR` is set);
-- **one slash command**, `/supercode`, in `~/.claude/commands/` - see [Supercode](#supercode);
-- **two git hooks** in `~/.git-hooks/` (`~/.git-templates/hooks/` is kept deliberately empty),
-  reached by a global `core.hooksPath`;
-- **`~/.claude/CLAUDE.md`**, rewritten on every run from the shipped `CLAUDE.global.md` - 27
-  lines on where a memory goes, how to write one, and session continuity. Keep anything you want
-  to survive a re-run in your memory repo's own copy, which wins over the framework's;
-- **two subagent files** in `~/.claude/agents/` - `architect` and `verify`, both pinned to
-  `model: sonnet`, the mid tier, so a framework a stranger runs sight-unseen does not bill at the
-  top one. To raise the tier, ship your own copies from your memory repo's
-  `claude-setup/config/agents/` with the `model:` line you want - a same-named file there wins;
-- **the two single-line path files** above;
-- and a merge into `~/.claude/settings.json`. A framework-only install leaves that file holding
-  **`hooks` and nothing else**: no `statusLine`, no `env`, and `permissions` is never touched.
-
-Everything else the layout allows - skills, further slash commands, a statusline, Codex and
-OpenCode config, extra git hooks - is an empty slot that a framework-only install reports as `skipped`
-until your memory repo fills it. The file-by-file list is [What setup
-installs](claude-setup/SETUP.md#what-setup-installs), and
-[Uninstall](claude-setup/SETUP.md#uninstall) undoes it. There are no opt-in flags for extra
-behaviour: what lands is decided by what the two roots ship, not by switches.
-
-`setup.sh` is idempotent and backs up anything it overwrites - the skills step is the one that
-replaces a whole `<name>` directory rather than merging it, backing up a differing one beside
-itself first. Re-running it is also how an update takes effect: **`git pull` on this repo changes
-nothing that runs**, because every hook executes from a copy under `~/.claude/hooks/`
-or `~/.git-hooks/`. `memory-doctor`'s wiring check reports that drift
-for the memory hooks under `~/.claude/hooks/`, and its [drift check](#config-drift) for the other
-hooks, the two `CLAUDE.md` files and the statusline; it never reads the two installed git
-guards, so drift in those is only ever fixed by re-running `setup.sh`.
-On a machine already set up, a bare `./setup.sh` is enough - the memory repo is remembered.
+**Linux, macOS and WSL**
 
 ```bash
-cd sunstone && git pull && ./setup.sh
+git clone https://github.com/joyahmed/sunstone sunstone
+cd sunstone
+./setup.sh --memory-repo git@github.com:you/my-memory.git
 ```
 
-## What the hooks do
+**Windows** (use `pwsh`, PowerShell 7 - `setup.ps1` does not run under the built-in Windows PowerShell 5.1)
 
-Every hook fails silently by design: no repo, no network, no `python3`, no `node` - the session
-still starts and the commit or push still goes through. That is the right call for one session
-and the wrong call for a month, which is what `memory-doctor` is for. **Why each hook is shaped
-the way it is** - the failure each one prevents, and the cases each deliberately stands down for -
-is in [Guard semantics](claude-setup/SETUP.md#guard-semantics) for the two git hooks, and in
-[The doctor notice hook](claude-setup/SETUP.md#the-doctor-notice-hook) and [Checking it still
-works](claude-setup/SETUP.md#checking-it-still-works) for the session hooks. Each script's own
-header comment carries the same reasoning at the point of use.
+```powershell
+git clone https://github.com/joyahmed/sunstone sunstone
+cd sunstone
+pwsh -ExecutionPolicy Bypass -File setup.ps1 -MemoryRepo git@github.com:you/my-memory.git
+```
 
-| Hook | Event | What it does |
-|---|---|---|
-| `ai-memory-sync` | Claude Code **SessionStart** | Pulls the memory repo (`--ff-only` first, then `--rebase --autostash` if the branches diverged, aborting on conflict), pushes anything still unpushed, runs the repo's optional `claude-setup/session-start.d/*` scripts, then injects `MEMORY_FILE` - plus whatever those scripts printed - as context. Every network call and every script is time-bounded. See [session-start.d](claude-setup/SETUP.md#session-startd-scripts-the-memory-repo-runs-on-every-machine). |
-| `ai-memory-commit` | Claude Code **SessionEnd** | Commits anything changed under `MEMORY_DIR`, staged **by path** and nothing else, with `--no-verify`; then fires a detached, time-bounded push and returns without waiting for it. Refuses to run at all mid-merge, mid-cherry-pick, mid-rebase or on a detached HEAD. |
-| `memory-doctor-notice` | Claude Code **SessionStart** | Injects a short notice from `memory-doctor --brief` - a summary line plus up to three WARN lines - at most once per 20 hours, and nothing at all when the stores are clean. Disable with `touch ~/.claude/.memory-doctor-off`. |
-| `session-bus-notice` | Claude Code **SessionStart** | Always injects this session's own address, `<box>/<repo>`, and the rule that a cross-session message opens with `FROM <box>/<repo>`. Then, once `BUS_DIR` is set: announces every other machine's outbox that changed since it was last announced, and records this session in `BUS_DIR/sessions-<side>.md` so a box that appears in no peer listing is still discoverable - see [The session bus](#the-session-bus). |
-| `pre-commit` | git, via global `core.hooksPath` | In `MEMORY_REPOS`, refuses a commit that stages paths both inside and outside `MEMORY_DIR`. Stands down entirely while git is mid-merge, cherry-pick, revert or rebase. Override: `ALLOW_MIXED_COMMIT=1 git commit`. |
-| `pre-push` | git, via global `core.hooksPath` | In `GUARDED_REPOS`, refuses any push that is not a fast-forward, any branch deletion, and any push whose remote tip is not in the local object store at all. Override: `ALLOW_FORCE_PUSH=1 git push`. |
-
-⚠️ Both git hooks **chain to the repo's own `.git/hooks/<name>` in every repo, guarded or not**,
-because a global `core.hooksPath` means git no longer runs a repo's own hooks by itself. Without
-that chaining, installing this framework would silently switch off every husky, lint-staged and
-`pre-commit.com` hook on the machine. Read the header of
-`claude-setup/config/git-hooks/pre-commit` before changing either one.
-
-The framework ships exactly those two guards, both conf-driven, and no opinion about commit
-*content*. `claude-setup/config/git-hooks/` is an overlay tree like every other one, so your
-memory repo can add hooks of its own or replace either guard by shipping a file of the same name.
-That is deliberately how anything opinionated is meant to travel: carrying the file **is** the
-opt-in, no flag is needed, and nobody else inherits your policy by installing this.
-
-### memory-doctor
+Then restart Claude Code and check it:
 
 ```bash
-node claude-setup/scripts/memory-doctor.js            # human report
-node claude-setup/scripts/memory-doctor.js --verbose  # list every item
-node claude-setup/scripts/memory-doctor.js --json     # machine-readable
-node claude-setup/scripts/memory-doctor.js --brief    # a short notice, or nothing (what the notice hook uses)
+node claude-setup/scripts/memory-doctor.js
 ```
 
-Read-only, and exit code 1 when there is an ERROR, so it works as a CI or pre-push gate. It
-checks the **wiring**, the **sync** state, the memory **index**, file **hygiene**, the
-machine-local **working tier**, per-project **repo stores** and **duplicates** across stores -
-[what each check catches](claude-setup/SETUP.md#checking-it-still-works). One more check is
-off until you switch it on:
+A git URL is cloned into `~/.ai-memory` (or `--clone-to <dir>`); a local path is used where it is. Use the URL form this machine can already log in with. If the clone fails, `setup.sh` stops before it writes anything.
 
-#### The work-queue check
+To update later: `cd sunstone && git pull && ./setup.sh`. A `git pull` alone changes nothing that runs, because the hooks run from copies.
 
-If you keep a work queue as a markdown file in your memory repo - a table of what is being worked
-on now, under a heading - the doctor can keep it honest. Three `sunstone.conf` keys, all read by
-`memory-doctor` only:
+## Watch it
 
-| Key | Default | Meaning |
-|---|---|---|
-| `QUEUE_FILE` | empty = **off** | The queue file, relative to the memory repo (`WORK-QUEUE.md`, say). |
-| `QUEUE_NOW_HEADING` | empty = the first `## ` heading whose text contains `NOW`, case-insensitive | The H2 that opens the NOW section, with or without the `## `. |
-| `QUEUE_NOW_MAX` | `3` | How many rows the NOW table may hold. |
+More of what I build: [youtube.com/@joysbuilds](https://www.youtube.com/@joysbuilds).
 
-The NOW section runs from that heading to the next `#`/`##` heading; its rows are the lines in it
-that start with `|`, minus the separator rows (`|---|`) and the header row above each one. Two
-things raise a WARN, never an ERROR, so the exit code is unchanged:
+## Learn more
 
-- more rows than `QUEUE_NOW_MAX`: `QUEUE: NOW has 5 rows (max 3); a longer NOW is a wish list`;
-- a row whose **last cell** carries a date that has passed: `QUEUE: NOW row dated 2026-09-01 is
-  in the past`, followed by the first 60 characters of the row. Only two forms are read, on
-  purpose: an ISO `YYYY-MM-DD` date, and the literal word `yesterday` (`today` is recognised and
-  is not past). `Mon D`-style dates are not parsed, so a queue that wants the check to fire writes
-  the ISO form.
+- [claude-setup/SETUP.md](claude-setup/SETUP.md): the full runbook. Flags, the memory repo layout, the `sunstone.conf` keys, what lands where, Windows notes, troubleshooting, uninstall.
+- `node claude-setup/scripts/memory-doctor.js --verbose` lists every check it makes.
 
-Both WARNs are part of the `--brief` notice the SessionStart hook injects, so a NOW that has grown
-past its cap is mentioned at the start of a session rather than discovered at the end of a month.
-A `QUEUE_FILE` that names a missing file, or a queue with no matching heading, is a WARN too.
+## License
 
-### Config drift
+MIT. See [LICENSE](LICENSE).
 
-`setup` installs `~/.claude/CLAUDE.md` (from `CLAUDE.global.md`), `~/CLAUDE.md` (from your memory
-repo's `agents/CLAUDE.md`), the statusline and every hook script as **copies**. A copy edited in
-place keeps working, `git status` in both repos stays clean, and nothing says the machine and the
-repo have parted - until the next `setup` run backs the edit up and overwrites it. Two answers,
-one per direction:
+---
 
-- **`memory-doctor` reports it.** The `drift` check is always on and costs a few file reads: each
-  installed file whose source is known is compared byte for byte with the file it was installed
-  from, resolved the way `setup` resolves it (the framework checkout from `~/.claude/sunstone-path`,
-  the memory repo from `ai-memory-path`, and whatever both ship, the memory repo's copy wins).
-  A difference is a WARN - `DRIFT: ~/CLAUDE.md differs from my-memory/agents/CLAUDE.md - edit the
-  repo file and re-run setup.sh, or copy the live file back into the repo if the live edit is the
-  one to keep` - and it is part of the `--brief` notice. Covered: the two `CLAUDE.md` files,
-  `statusline-command.sh` / `.js`, and everything in `~/.claude/hooks/` that either root ships
-  (the two memory hooks are reported by the **wiring** check instead). Both platforms.
-- **`LINK_CLAUDE_MD=1` prevents it, on POSIX.** With that key in `sunstone.conf`, `setup.sh`
-  installs the two `CLAUDE.md` files as **symlinks** to their repo sources instead of copies, so
-  editing the live file *is* editing the repo file and `git status` shows it. An existing copy
-  is backed up beside itself first (only when its content differs from the source); re-running
-  is a no-op once the links are in place, and removing the key turns them back into copies on
-  the next run. Off by default, because a link into a checkout surprises a machine that later
-  moves the checkout. `setup.ps1` ignores the key - a symlink on Windows needs Developer Mode -
-  and prints one line saying so; the drift check covers Windows instead.
+<div align="center">
 
-| Key | Default | Meaning |
-|---|---|---|
-| `LINK_CLAUDE_MD` | unset = copies | `1`: `setup.sh` symlinks `~/CLAUDE.md` and `~/.claude/CLAUDE.md` to the repo files. POSIX only. |
-| `LINK_HOOKS` | unset = copies | `1`: `setup.sh` symlinks `~/.claude/hooks/*` at this repo's `claude-setup/config/hooks/*`. A `git pull` here then updates every hook on that machine, instead of the fix waiting for somebody to re-run setup on each box. POSIX only; `setup.ps1` ignores it. |
-| `LINK_COMMANDS` | unset = copies | `1`: `setup.sh` symlinks `~/.claude/commands/*.md` at their repo sources, so a `git pull` updates the slash commands. POSIX only. A live file that has DIVERGED from the repo copy is kept and named, never replaced. |
-| `LINK_SKILLS` | unset = copies | `1`: same for `~/.claude/skills/<name>` (the whole skill directory becomes one symlink). POSIX only, same divergence rule. |
+I build tools I use myself, from Bangladesh. If sunstone saves you from teaching a new machine everything again, that makes me happy.<br>
+Found a bug or want something? [Open an issue](https://github.com/joyahmed/sunstone/issues).
 
-`LINK_HOOKS` exists because a fix that reaches every checkout and no live machine is invisible;
-`LINK_COMMANDS` and `LINK_SKILLS` exist because commands and skills had the same hole and nobody
-had noticed. Measured on one box: three of six installed commands were strict subsets of their repo
-copy, with zero lines of their own - never refreshed since the missing sections landed, one of which
-was a rule whose absence makes an unattended run fail its own commit every slice.
+**Joy**
 
-**The keys are the optional half. The half that is not optional is the reporting:**
-`claude-setup/scripts/install-doctor.sh` compares every shipped command, skill **and top-level
-config file** (`statusline-command.sh`, `statusline-command.js`, the
-`CLAUDE.md` overlay - the ones setup installs straight into `~/.claude`) against what is
-installed and separates two answers - **stale** (every line of the live file is in the repo copy and
-the repo copy has more: a copy nobody touched, only failed to refresh; `--fix` refreshes it) from
-**diverged** (the live file has lines of its own, so it may be a deliberate local edit: reported and
-left alone, never repaired, never backed-up-and-replaced). A symlinked file tracks the repo and is
-not reported at all, and a file that is not line-oriented text is reported as **cannot verify**
-rather than judged by a line test that means nothing for it. The top-level files were the gap that
-made the check worth widening: one machine painted a status line 5 KB behind its repo copy for
-weeks, as a plain copy, while the sibling userland had the same file as a symlink and correct.
-`claude-setup/config/hooks/tests/install-doctor-staleness.test.sh` holds the
-negative controls: a deliberately stale fixture the detector must name, and a hand-edited one
-`--fix` must leave byte-for-byte alone - plus the inverse controls, since a detector that flags
-everything is as useless as one that flags nothing.
-
-## The session bus
-
-Two machines of one user - a laptop and a desktop, the WSL side and the Windows side of one box -
-share the memory repo but not a terminal. The session bus lets a session on one side leave a note
-the next session on the other side will see, with nothing but the repo in between. Off until you
-set it up; two `sunstone.conf` keys:
-
-| Key | Default | Meaning |
-|---|---|---|
-| `BUS_DIR` | unset = **off** | The bus directory, relative to the memory repo (`claude-setup/bus`, say). |
-| `BUS_SIDE` | detected | This machine's side name. Detection: `windows` on Windows, `mac` on macOS, `wsl` when `/proc/version` mentions Microsoft, else `linux`. Set it when two machines would detect the same name. |
-| `SESSION_REGISTRY_DAYS` | `3` | How long a row stays in `BUS_DIR/sessions-<side>.md` before the next write prunes it. At most 100 rows are kept whatever this says. |
-
-**The protocol.** `BUS_DIR/outbox-<side>.md`, one writer per file: a machine writes **only its own**
-outbox, newest entry at the top under a `## <stamp> - <subject>` heading, then commits that file
-by path and pushes. The other side sees it at its next SessionStart, because `ai-memory-sync`
-pulled first.
-
-⚠️ **One writer per file means one MACHINE, not one session.** Several sessions commonly run on
-one box and they all share that box's outbox, so a session appends its entry at the top and
-pushes promptly rather than holding the file open. A session that assumes it is the only writer
-is how two of them race on the same file.
-
-**Committing a bus entry.** The SessionEnd hook stages `BUS_DIR` and commits it as its **own**
-commit, separate from the `MEMORY_DIR` one, so a closing summary lands without anyone staging it
-by hand. ⛔ The two must stay separate commits: a repo may guard against a commit that mixes the
-memory tree with anything outside it, and a single `add` of both paths would be refused, leaving
-the hook to do nothing at all. Committing an entry by hand still works and is the right move when
-it must reach another machine *now* rather than at session end.
-
-**The hook.** `session-bus-notice.js` runs at SessionStart, registered by the settings template
-after the sync hook on both platforms (Node, no dependencies). For every `outbox-*.md` in `BUS_DIR`
-that is not this side's own, it compares the file's git blob hash with the last one it announced,
-kept under `~/.claude/session-bus/<file>.seen`, and when they differ it injects one line:
-
-```
-📬 session bus: outbox-windows.md has a new entry - "2026-09-21 10:00 - please pull the fonts branch"
-```
-
-The quoted part is the file's first `## ` heading. It is silent when `BUS_DIR` is unset or the
-directory is missing, when nothing changed, when a file it has never seen is empty, and on every
-failure. Claude Code may start SessionStart hooks together, so a message that arrives in the very
-same pull can be announced one session late; nothing is lost, because the comparison is against
-what is on disk. The `.seen` files are machine-local by design - each machine keeps its own
-record of what it has been told.
-
-### A session's address is `<box>/<repo>`
-
-⛔ **A session's title is not an address.** A peer choosing who to message reads a session listing,
-and the only per-row identity it offers is the **display name** - which, when nothing sets it, is
-derived from the session's first task. A session whose first task was "contact the other box" is
-therefore listed under a title naming a box it is not on: the listing asserts the opposite of the
-truth, and messages follow it. That happened for a whole day, and a session cannot rename itself
-from inside, so the name has to be set where a session is created.
-
-Two parts (a third, the `bin/supermode` launcher that passed `--name "<box>/<repo>"`, was
-retired with supermode on 2026-09-29 - name a session yourself with `claude --name <box>/<repo>`):
-
-1. **The hook tells the session its own address,** so its `FROM` line is not guesswork. `<box>/<repo>`
-   is the smallest thing that identifies one session: one box runs several at once and they all read
-   the same name file, so the box alone cannot route a message.
-2. **The registry says a session exists at all,** because naming only helps a session that appears
-   somewhere. `BUS_DIR/sessions-<side>.md` is a table of `started · box · repo · session id · display
-   name`, rewritten at every SessionStart: one row per session id, updated in place, so a second start
-   changes nothing. One file per side, like the outboxes, because two boxes rewriting one shared file
-   would conflict on every pull. Rows older than `SESSION_REGISTRY_DAYS` go on the next write and at
-   most 100 are kept. ⚠️ The hook never commits it - the SessionEnd memory hook already stages
-   `BUS_DIR` by path.
-
-⚠️ **unverified:** whether the harness stores and displays a `/` in a session name unchanged has not
-been observed - nothing on disk records a session's display name, and the status line never receives
-one (its payload carries the model's display name and the session id, nothing else). The registry
-therefore records the **intended** address in its own columns rather than trusting a title, and the
-hook says so when a name it *can* see disagrees with the address.
-
-## Context cap
-
-Every main session is capped at **80k tokens grown since its first turn** (the injected context
-on turn 1 is not counted). Two hooks, both in the base `settings.json`, both silent inside a
-subagent:
-
-- `context-guard.mjs` (PostToolUse) works out the figure from the transcript's `usage` and, from
-  70% of the cap (56k grown), once per 5% band, tells the model: hand big reads to a subagent;
-  near the cap, finish the task, commit, write a handoff note, and tell the user to start a fresh
-  session. It never recommends compaction - the summary drops the numbers a successor needs.
-- `context-cap.mjs` (PreToolUse) is the hard stop. At the cap it refuses the calls that start new
-  work - `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `ctx_*` tools and `Agent` (except an
-  `Agent` whose prompt says "resume") - and leaves `Bash`, `Edit` and `Write` open to finish.
-- `token-budget.mjs` (PreToolUse, `Agent|Workflow`, main session only) caps SPEND, not fullness:
-  it sums input + cache-creation + output tokens (cache reads excluded, message ids deduped) over
-  the main transcript and every agent transcript of the session, warns once at 2M and refuses new
-  `Agent`/`Workflow` calls at 3M; every other tool stays open. `TOKEN_BUDGET_TOKENS` (default
-  3000000, 0 = off), `TOKEN_BUDGET_WARN_PCT` (default 67).
-
-Tunables: `CTX_CAP_TOKENS` (default 80000, 0 = off), `CTX_CAP_PCT` (nudge threshold, default 70),
-`CTX_CAP_WINDOW` (window override). The old `SUPERMODE_CTX_*` names are still read as fallbacks.
-
-Supermode - an unattended, orchestrate-only mode with its own launcher, settings layer and
-`/supermode` command - was retired on 2026-09-29; the cap above is the part of it every session
-keeps.
-
-## Supercode
-
-**Supercode** is width: `/supercode` fans the work out over concurrent agents - plain means
-the minimum that gives assurance (2-3 disjoint lenses, one refuter per finding), `max` means
-as wide as the work splits. It carries the four rules that make a fan-out pay (exclusive file
-ownership, hand over the verified facts, name the shared resources nobody may touch, gate
-centrally once) and the two things it cannot do (one shared file, ambiguous work).
-
-The word is one person's; the mechanism is anyone's. Rename the command in your memory
-repo's `claude-setup/commands/` if you want another word - a same-named file there wins.
-
-## Layout
-
-```
-sunstone/
-├── README.md
-├── setup.sh                       # Linux / macOS / WSL - the installer these docs describe
-├── setup.ps1                      # Windows equivalent (Node hook ports; keeps its UTF-8 BOM)
-└── claude-setup/
-    ├── SETUP.md                   # the runbook: flags, what lands where, verifying, uninstall
-    ├── install.sh                 # optional: re-applies the eleven non-memory steps alone
-    ├── scripts/
-    │   └── memory-doctor.js
-    └── config/
-        ├── hooks/
-        │   ├── ai-memory-sync.sh / .js       # SessionStart (sh on POSIX, js on Windows)
-        │   ├── ai-memory-commit.sh / .js     # SessionEnd
-        │   ├── memory-doctor-notice.sh / .js # SessionStart notice (sh on POSIX, js on Windows)
-        │   ├── session-bus-notice.js         # SessionStart: this session's address, another machine's outbox (BUS_DIR), the session registry
-        │   ├── graphify-nudge.mjs            # PreToolUse: the graphify hint; no python3 needed
-        │   ├── context-mode-cache-heal.mjs   # unrelated to memory; ships with the hooks tree
-        │   ├── ctx-gauge.mjs                 # optional status-line front, writes the exact % (unregistered)
-        │   ├── context-guard.mjs             # PostToolUse: checkpoint nudge from 56k grown
-        │   ├── context-cap.mjs               # PreToolUse: refuses new reads/agents at 80k grown
-        │   ├── token-budget.mjs              # PreToolUse: session + agents spend, warn 2M, no new agents at 3M
-        │   └── say.sh / say.ps1              # one spoken sentence
-        ├── git-hooks/
-        │   ├── pre-commit                    # mixed-staging guard
-        │   └── pre-push                      # force-push guard
-        │                                     #   (a personal repo may add its own here - they
-        │                                     #    install after these and override by filename)
-        ├── merge-ai-memory-hook.py           # setup.sh: registers the memory hooks in settings.json
-        ├── merge-claude-settings.mjs         # setup.ps1: the same, plus an optional statusLine
-        ├── merge-settings-template.py / .mjs # the template merger (one tool, two ports)
-        ├── agents/                           # architect.md, verify.md → ~/.claude/agents/
-        ├── settings.json                     # template merged into ~/.claude/settings.json
-        └── CLAUDE.global.md                  # → ~/.claude/CLAUDE.md; a memory-repo copy wins
-    └── commands/
-        └── supercode.md                  # /supercode - the fan-out procedure
-```
-
-There is no `skills/`, no `plugins/` and no statusline in that tree, and `commands/` holds only
-the one above. They are overlay slots, filled by whatever your memory repo carries in the same
-relative layout.
-
-`claude-setup/install.sh` is a separate, optional script that re-applies the eleven non-memory steps
-alone. It deliberately omits the twelfth, `git-hooks`, because installing hook files without
-also setting `core.hooksPath` would put them on disk where nothing runs them - and it registers
-no memory hooks, so on its own it leaves them installed and inert. `setup.sh` is what installs the
-memory layer; see [The second installer](claude-setup/SETUP.md#the-second-installer-installsh).
-
-Flags, prerequisites, the memory repo's layout and file format, the `sunstone.conf` reference,
-what lands where file by file, how to verify a fresh install, Windows, troubleshooting and
-uninstall are all in [claude-setup/SETUP.md](claude-setup/SETUP.md).
+</div>
